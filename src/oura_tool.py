@@ -595,17 +595,22 @@ async def get_personal_info() -> dict:
 
 def main():
     """Run the MCP server"""
-    port = int(os.getenv("PORT", "8080"))
+    # Railway sets PORT dynamically
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Debug: Print environment info
+    print(f"Starting server with PORT={port}")
+    print(f"OURA_API_TOKEN present: {'Yes' if os.environ.get('OURA_API_TOKEN') else 'No'}")
     
     if not OURA_API_TOKEN:
         print("Warning: OURA_API_TOKEN not set. The server will start but API calls will fail.")
         print("Please set your Oura API token in the environment or .env file.")
     
     print(f"Starting Oura MCP server on port {port}")
-    print(f"POST requests to http://localhost:{port}/mcp")
+    print(f"Server will listen on 0.0.0.0:{port}")
     
-    # Run the MCP server
-    mcp.run(transport="streamable-http", port=port)
+    # Run the MCP server - bind to 0.0.0.0 for Railway
+    mcp.run(transport="streamable-http", port=port, host="0.0.0.0")
 
 
 if __name__ == "__main__":
