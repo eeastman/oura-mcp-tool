@@ -477,19 +477,30 @@ async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str]
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
     """MCP endpoint with OAuth protection"""
-    # Validate token
-    token_data = await validate_token(request)
+    print("=== MCP ENDPOINT CALLED ===")
+    print(f"Headers: {dict(request.headers)}")
+    
+    try:
+        # Validate token
+        token_data = await validate_token(request)
+        print(f"Token validated for user: {token_data.get('user_id')}")
+    except HTTPException as e:
+        print(f"Token validation failed: {e.detail}")
+        raise
     
     try:
         # Parse MCP request
         body = await request.body()
-        mcp_request = json.loads(body.decode())
+        body_str = body.decode()
+        print(f"MCP request body: {body_str}")
+        
+        mcp_request = json.loads(body_str)
         method = mcp_request.get("method")
         
-        print(f"MCP request: {method}")
+        print(f"MCP method: {method}")
         
         if method == "initialize":
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": mcp_request.get("id"),
                 "result": {
@@ -498,9 +509,10 @@ async def mcp_endpoint(request: Request):
                     "serverInfo": {"name": "oura-stress-resilience", "version": "1.0.0"}
                 }
             }
+            return JSONResponse(content=response, headers={"Content-Type": "application/json"})
         
         elif method == "tools/list":
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": mcp_request.get("id"),
                 "result": {
@@ -519,6 +531,7 @@ async def mcp_endpoint(request: Request):
                     }]
                 }
             }
+            return JSONResponse(content=response, headers={"Content-Type": "application/json"})
         
         elif method == "tools/call":
             params = mcp_request.get("params", {})
@@ -529,26 +542,37 @@ async def mcp_endpoint(request: Request):
                     date_param=args.get("date_param")
                 )
                 
-                return {
-                    "jsonrpc": "2.0",
-                    "id": mcp_request.get("id"),
-                    "result": result
-                }
+                return JSONResponse(
+                    content={
+                        "jsonrpc": "2.0",
+                        "id": mcp_request.get("id"),
+                        "result": result
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
         
         # Unknown method
-        return {
-            "jsonrpc": "2.0",
-            "id": mcp_request.get("id"),
-            "error": {"code": -32601, "message": f"Method not found: {method}"}
-        }
+        return JSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "id": mcp_request.get("id"),
+                "error": {"code": -32601, "message": f"Method not found: {method}"}
+            },
+            headers={"Content-Type": "application/json"}
+        )
         
     except Exception as e:
         print(f"MCP error: {str(e)}")
-        return {
-            "jsonrpc": "2.0",
-            "id": mcp_request.get("id") if 'mcp_request' in locals() else None,
-            "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
-        }
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return JSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "id": mcp_request.get("id") if 'mcp_request' in locals() else None,
+                "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
+            },
+            headers={"Content-Type": "application/json"}
+        )
 
 # Health check
 @app.get("/health")
