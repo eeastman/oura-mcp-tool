@@ -23,8 +23,17 @@ load_dotenv()
 
 # Get configuration from environment
 OURA_API_BASE_URL = "https://api.ouraring.com/v2/usercollection"
-AUTH_SERVER_URL = os.getenv('AUTH_SERVER_URL', 'http://localhost:8080')
-TOOL_SERVER_URL = os.getenv('TOOL_SERVER_URL', 'http://localhost:8080') 
+
+# Auto-detect public URL (Railway sets RAILWAY_PUBLIC_DOMAIN automatically)
+RAILWAY_PUBLIC_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+if RAILWAY_PUBLIC_DOMAIN:
+    DEFAULT_BASE_URL = f"https://{RAILWAY_PUBLIC_DOMAIN}"
+else:
+    # Fallback for your specific deployment
+    DEFAULT_BASE_URL = 'https://web-production-863cd.up.railway.app'
+
+AUTH_SERVER_URL = os.getenv('AUTH_SERVER_URL', DEFAULT_BASE_URL)
+TOOL_SERVER_URL = os.getenv('TOOL_SERVER_URL', DEFAULT_BASE_URL) 
 JWT_SECRET = os.getenv('JWT_SECRET', 'dev-secret-change-in-production')
 
 # Oura OAuth Configuration
