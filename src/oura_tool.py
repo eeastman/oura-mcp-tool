@@ -473,6 +473,18 @@ async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str]
             "isError": True
         }
 
+# MCP endpoint info
+@app.get("/mcp")
+async def mcp_info():
+    """MCP endpoint information"""
+    return {
+        "service": "Oura Stress & Resilience MCP Server",
+        "version": "1.0.0",
+        "protocol": "MCP 2024-11-05",
+        "authentication": "OAuth 2.0 Bearer token required",
+        "methods": ["initialize", "tools/list", "tools/call"]
+    }
+
 # Protected MCP endpoint
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
@@ -494,9 +506,34 @@ async def mcp_endpoint(request: Request):
         body_str = body.decode()
         print(f"MCP request body: {body_str}")
         
-        mcp_request = json.loads(body_str)
-        method = mcp_request.get("method")
+        # Handle empty body case
+        if not body_str:
+            print("Empty body received, returning error")
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error: Empty request body"}
+                },
+                headers={"Content-Type": "application/json"},
+                status_code=400
+            )
         
+        try:
+            mcp_request = json.loads(body_str)
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": f"Parse error: {str(e)}"}
+                },
+                headers={"Content-Type": "application/json"},
+                status_code=400
+            )
+        
+        method = mcp_request.get("method")
         print(f"MCP method: {method}")
         
         if method == "initialize":
