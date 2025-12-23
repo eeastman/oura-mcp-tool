@@ -243,6 +243,8 @@ async def token_endpoint(request: Request):
             client_id = form_data.get("client_id") 
             code_verifier = form_data.get("code_verifier")
             
+            print(f"Token exchange: code={code}, client_id={client_id}, verifier={'Yes' if code_verifier else 'No'}")
+            
             # Validate authorization code
             if code not in authorization_codes:
                 raise HTTPException(status_code=400, detail="Invalid authorization code")
@@ -254,8 +256,11 @@ async def token_endpoint(request: Request):
                 del authorization_codes[code]
                 raise HTTPException(status_code=400, detail="Authorization code expired")
             
-            # Validate PKCE challenge
-            if code_data["code_challenge_method"] == "S256":
+            # Validate PKCE challenge (only if provided)
+            if code_data.get("code_challenge") and code_data.get("code_challenge_method") == "S256":
+                if not code_verifier:
+                    raise HTTPException(status_code=400, detail="code_verifier required for PKCE")
+                    
                 import hashlib
                 import base64
                 
