@@ -89,7 +89,7 @@ class OuraAPIClient:
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     """OAuth 2.0 Authorization Server Metadata"""
-    return {
+    metadata = {
         "issuer": BASE_URL,
         "authorization_endpoint": f"{BASE_URL}/oauth/authorize",
         "token_endpoint": f"{BASE_URL}/oauth/token",
@@ -98,8 +98,12 @@ async def oauth_metadata():
         "grant_types_supported": ["authorization_code"],
         "response_types_supported": ["code"],
         "token_endpoint_auth_methods_supported": ["none"],
-        "scopes_supported": ["oura:read"]
+        "scopes_supported": ["oura:read"],
+        "response_modes_supported": ["query"],
+        "subject_types_supported": ["public"]
     }
+    print(f"OAuth metadata requested, returning: {metadata}")
+    return metadata
 
 @app.get("/.well-known/oauth-protected-resource")
 async def resource_metadata():
@@ -177,18 +181,32 @@ async def authorize(
     # Redirect to Oura connection page
     return RedirectResponse(url=f"{BASE_URL}/connect?session={session_id}")
 
+@app.get("/oauth/token")
+async def token_info():
+    """OAuth token endpoint info for GET requests"""
+    return {"error": "Method not allowed", "message": "Use POST to exchange tokens"}
+
 @app.post("/oauth/token")
 async def exchange_token(request: Request):
     """OAuth Token Exchange"""
     print("=== TOKEN EXCHANGE CALLED ===")
+    print(f"Request method: {request.method}")
+    print(f"Request headers: {dict(request.headers)}")
+    print(f"Available auth codes: {list(auth_codes.keys())}")
     
     try:
-        form_data = await request.form()
-        print(f"Token request data: {dict(form_data)}")
+        # Handle both form data and JSON requests
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            form_data = await request.json()
+            print(f"Token request JSON: {form_data}")
+        else:
+            form_data = dict(await request.form())
+            print(f"Token request form data: {form_data}")
         
         grant_type = form_data.get("grant_type")
         if grant_type != "authorization_code":
-            raise HTTPException(status_code=400, detail="Unsupported grant type")
+            raise HTTPException(status_code=400, detail=f"Unsupported grant type: {grant_type}")
         
         code = form_data.get("code")
         client_id = form_data.get("client_id")
@@ -325,8 +343,13 @@ async def save_oura_token(request: Request):
     if auth_data.get("state"):
         redirect_url += f"&state={auth_data['state']}"
     
+    print(f"=== AUTHORIZATION COMPLETE ===")
+    print(f"Generated auth code: {final_code}")
     print(f"Redirecting to: {redirect_url}")
-    return RedirectResponse(url=redirect_url)
+    print(f"Auth codes in storage: {list(auth_codes.keys())}")
+    
+    # Use 302 redirect for better compatibility
+    return RedirectResponse(url=redirect_url, status_code=302)
 
 # Token validation
 async def validate_token(request: Request):
@@ -538,6 +561,18 @@ async def health():
         "tokens": len(access_tokens)
     }
 
+# OAuth callback endpoint (some clients might GET this)
+@app.get("/oauth/callback")
+async def oauth_callback(code: str = None, state: str = None, error: str = None):
+    """Handle OAuth callbacks - just for debugging"""
+    print(f"OAuth callback received: code={code}, state={state}, error={error}")
+    return {
+        "message": "This is the OAuth server callback endpoint",
+        "code": code,
+        "state": state,
+        "error": error
+    }
+
 # Test endpoints for development
 @app.get("/")
 async def root():
@@ -552,6 +587,22 @@ async def root():
             "health": "/health"
         }
     }
+
+# Catch-all route for debugging
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def catch_all(request: Request, path: str):
+    """Log all unhandled requests for debugging"""
+    print(f"=== UNHANDLED REQUEST ===")
+    print(f"Path: /{path}")
+    print(f"Method: {request.method}")
+    print(f"Headers: {dict(request.headers)}")
+    if request.method in ["POST", "PUT"]:
+        try:
+            body = await request.body()
+            print(f"Body: {body.decode()}")
+        except:
+            pass
+    raise HTTPException(status_code=404, detail=f"Path not found: /{path}")
 
 def main():
     """Run the server"""
