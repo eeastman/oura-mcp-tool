@@ -1,14 +1,15 @@
 """
-Oura MCP Tool - Access Oura Ring health data through Dreamer platform
+Oura Stress and Resilience MCP Tool - Access stress load and resilience data through Dreamer platform
 """
 
 from fastmcp import FastMCP
 from pydantic import Field
 import httpx
 import os
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from datetime import datetime, date
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -18,7 +19,7 @@ OURA_API_TOKEN = os.getenv('OURA_API_TOKEN')
 OURA_API_BASE_URL = "https://api.ouraring.com/v2/usercollection"
 
 # Initialize FastMCP server
-mcp = FastMCP("oura-health", version="1.0.0")
+mcp = FastMCP("oura-stress-resilience", version="1.0.0")
 
 
 class OuraAPIClient:
@@ -80,12 +81,52 @@ class OuraAPIClient:
 oura_client = OuraAPIClient(OURA_API_TOKEN) if OURA_API_TOKEN else None
 
 
+def calculate_stress_ratio(high_stress_seconds: int, recovery_seconds: int) -> float:
+    """Calculate stress:recovery ratio, handling division by zero"""
+    if recovery_seconds == 0:
+        return float('inf') if high_stress_seconds > 0 else 0.0
+    return high_stress_seconds / recovery_seconds
+
+
+def get_day_summary_description(ratio: float) -> str:
+    """Convert stress ratio to descriptive summary"""
+    if ratio == 0:
+        return "very_restorative"
+    elif ratio <= 1:
+        return "restorative" 
+    elif ratio <= 2:
+        return "balanced"
+    elif ratio <= 4:
+        return "stressful"
+    else:
+        return "very_stressful"
+
+
+def get_resilience_level(contributors: Dict[str, int]) -> str:
+    """Determine resilience level based on contributor scores"""
+    avg_score = sum(contributors.values()) / len(contributors) if contributors else 0
+    
+    if avg_score >= 75:
+        return "excellent"
+    elif avg_score >= 60:
+        return "good"
+    elif avg_score >= 45:
+        return "limited"
+    else:
+        return "low"
+
+
 @mcp.tool()
-async def get_sleep_data(
-    start_date: str = Field(description="Start date in YYYY-MM-DD format"),
-    end_date: Optional[str] = Field(None, description="End date in YYYY-MM-DD format (defaults to start_date)")
+async def get_stress_and_resilience(
+    user_id: Optional[str] = Field(None, description="User ID (not required for personal tokens)"),
+    date_param: Optional[str] = Field(None, description="Date in YYYY-MM-DD format (defaults to today)")
 ) -> dict:
-    """Get sleep data from Oura for a specified date range."""
+    """
+    Returns today's stress load (time in high stress vs. recovery) and resilience level.
+    
+    Provides actionable stress:recovery ratio and resilience context to understand
+    capacity decline patterns beyond just readiness scores.
+    """
     
     if not oura_client:
         return {
@@ -97,68 +138,104 @@ async def get_sleep_data(
         }
     
     try:
-        # Validate dates
-        datetime.strptime(start_date, "%Y-%m-%d")
-        if end_date:
-            datetime.strptime(end_date, "%Y-%m-%d")
-        else:
-            end_date = start_date
+        # Use provided date or default to today
+        target_date = date_param if date_param else date.today().strftime("%Y-%m-%d")
         
-        # Fetch sleep data
-        params = {
-            "start_date": start_date,
-            "end_date": end_date
-        }
+        # Validate date format
+        datetime.strptime(target_date, "%Y-%m-%d")
         
-        data = await oura_client.fetch_with_retry("sleep", params)
+        # Fetch both stress and resilience data in parallel
+        stress_params = {"start_date": target_date, "end_date": target_date}
         
-        if data.get("isError"):
+        # Make both API calls
+        stress_task = oura_client.fetch_with_retry("daily_stress", stress_params)
+        resilience_task = oura_client.fetch_with_retry("daily_resilience", stress_params)
+        
+        stress_data, resilience_data = await asyncio.gather(stress_task, resilience_task)
+        
+        # Check for API errors
+        if stress_data.get("isError"):
+            return {
+                "content": [{
+                    "type": "text", 
+                    "text": f"Error fetching stress data: {stress_data.get('error')}"
+                }],
+                "isError": True
+            }
+            
+        if resilience_data.get("isError"):
             return {
                 "content": [{
                     "type": "text",
-                    "text": data.get("error", "Failed to fetch sleep data")
+                    "text": f"Error fetching resilience data: {resilience_data.get('error')}"
                 }],
                 "isError": True
             }
         
-        sleep_sessions = data.get("data", [])
+        # Extract data for the target date
+        stress_records = stress_data.get("data", [])
+        resilience_records = resilience_data.get("data", [])
         
-        if not sleep_sessions:
+        # Find records for the target date
+        stress_record = next((r for r in stress_records if r.get("day") == target_date), None)
+        resilience_record = next((r for r in resilience_records if r.get("day") == target_date), None)
+        
+        if not stress_record:
             return {
                 "content": [{
                     "type": "text",
-                    "text": f"No sleep data found for {start_date} to {end_date}"
+                    "text": f"No stress data found for {target_date}"
                 }],
                 "structuredContent": {
-                    "sleep_sessions": [],
-                    "date_range": {
-                        "start": start_date,
-                        "end": end_date
-                    }
+                    "date": target_date,
+                    "stress": None,
+                    "resilience": None
                 }
             }
         
-        # Format sleep data
-        formatted_sessions = []
-        for session in sleep_sessions:
-            formatted_sessions.append({
-                "date": session.get("day"),
-                "total_sleep": session.get("total_sleep_duration"),
-                "rem_sleep": session.get("rem_sleep_duration"),
-                "deep_sleep": session.get("deep_sleep_duration"),
-                "light_sleep": session.get("light_sleep_duration"),
-                "awake_time": session.get("awake_time"),
-                "sleep_score": session.get("score", {}).get("total"),
-                "efficiency": session.get("sleep_efficiency"),
-                "latency": session.get("sleep_latency"),
-                "bedtime_start": session.get("bedtime_start"),
-                "bedtime_end": session.get("bedtime_end")
-            })
+        # Process stress data
+        high_stress_seconds = stress_record.get("stress_high", 0)
+        recovery_seconds = stress_record.get("recovery_high", 0)
+        ratio = calculate_stress_ratio(high_stress_seconds, recovery_seconds)
+        day_summary = get_day_summary_description(ratio)
         
-        summary_text = f"Found {len(formatted_sessions)} sleep session(s) from {start_date} to {end_date}."
-        if formatted_sessions:
-            latest = formatted_sessions[0]
-            summary_text += f" Latest session: {latest['total_sleep']//3600}h {(latest['total_sleep']%3600)//60}m total sleep, score: {latest['sleep_score']}"
+        stress_result = {
+            "highStressSeconds": high_stress_seconds,
+            "recoverySeconds": recovery_seconds, 
+            "ratio": ratio if ratio != float('inf') else None,
+            "daySummary": day_summary
+        }
+        
+        # Process resilience data
+        resilience_result = None
+        if resilience_record:
+            contributors = resilience_record.get("contributors", {})
+            resilience_contributors = {
+                "sleepRecovery": contributors.get("sleep_recovery", 0),
+                "daytimeRecovery": contributors.get("daytime_recovery", 0), 
+                "stress": contributors.get("stress", 0)
+            }
+            
+            resilience_result = {
+                "level": get_resilience_level(resilience_contributors),
+                "contributors": resilience_contributors
+            }
+        
+        # Create summary text
+        stress_hours = high_stress_seconds // 3600
+        stress_minutes = (high_stress_seconds % 3600) // 60
+        recovery_hours = recovery_seconds // 3600
+        recovery_minutes = (recovery_seconds % 3600) // 60
+        
+        summary_text = f"Stress & Resilience for {target_date}: "
+        summary_text += f"{stress_hours}h{stress_minutes}m high stress, "
+        summary_text += f"{recovery_hours}h{recovery_minutes}m recovery"
+        
+        if ratio != float('inf') and ratio is not None:
+            summary_text += f" (ratio: {ratio:.1f}:1)"
+        
+        if resilience_result:
+            summary_text += f", resilience: {resilience_result['level']}"
         
         return {
             "content": [{
@@ -166,11 +243,9 @@ async def get_sleep_data(
                 "text": summary_text
             }],
             "structuredContent": {
-                "sleep_sessions": formatted_sessions,
-                "date_range": {
-                    "start": start_date,
-                    "end": end_date
-                }
+                "date": target_date,
+                "stress": stress_result,
+                "resilience": resilience_result
             }
         }
         
@@ -186,408 +261,7 @@ async def get_sleep_data(
         return {
             "content": [{
                 "type": "text",
-                "text": f"Error fetching sleep data: {str(e)}"
-            }],
-            "isError": True
-        }
-
-
-@mcp.tool()
-async def get_activity_data(
-    start_date: str = Field(description="Start date in YYYY-MM-DD format"),
-    end_date: Optional[str] = Field(None, description="End date in YYYY-MM-DD format (defaults to start_date)")
-) -> dict:
-    """Get daily activity data from Oura for a specified date range."""
-    
-    if not oura_client:
-        return {
-            "content": [{
-                "type": "text",
-                "text": "Oura API token not configured. Please set OURA_API_TOKEN environment variable."
-            }],
-            "isError": True
-        }
-    
-    try:
-        # Validate dates
-        datetime.strptime(start_date, "%Y-%m-%d")
-        if end_date:
-            datetime.strptime(end_date, "%Y-%m-%d")
-        else:
-            end_date = start_date
-        
-        # Fetch activity data
-        params = {
-            "start_date": start_date,
-            "end_date": end_date
-        }
-        
-        data = await oura_client.fetch_with_retry("daily_activity", params)
-        
-        if data.get("isError"):
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": data.get("error", "Failed to fetch activity data")
-                }],
-                "isError": True
-            }
-        
-        activities = data.get("data", [])
-        
-        if not activities:
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": f"No activity data found for {start_date} to {end_date}"
-                }],
-                "structuredContent": {
-                    "activities": [],
-                    "date_range": {
-                        "start": start_date,
-                        "end": end_date
-                    }
-                }
-            }
-        
-        # Format activity data
-        formatted_activities = []
-        for activity in activities:
-            formatted_activities.append({
-                "date": activity.get("day"),
-                "activity_score": activity.get("score"),
-                "steps": activity.get("steps"),
-                "active_calories": activity.get("active_calories"),
-                "total_calories": activity.get("total_calories"),
-                "equivalent_walking_distance": activity.get("equivalent_walking_distance"),
-                "high_activity_time": activity.get("high_activity_time"),
-                "medium_activity_time": activity.get("medium_activity_time"),
-                "low_activity_time": activity.get("low_activity_time"),
-                "sedentary_time": activity.get("sedentary_time"),
-                "movement_alert_count": activity.get("non_wear_time"),
-                "target_calories": activity.get("target_calories"),
-                "target_meters": activity.get("target_meters")
-            })
-        
-        summary_text = f"Found {len(formatted_activities)} day(s) of activity data from {start_date} to {end_date}."
-        if formatted_activities:
-            latest = formatted_activities[0]
-            summary_text += f" Latest: {latest['steps']} steps, {latest['total_calories']} calories, activity score: {latest['activity_score']}"
-        
-        return {
-            "content": [{
-                "type": "text",
-                "text": summary_text
-            }],
-            "structuredContent": {
-                "activities": formatted_activities,
-                "date_range": {
-                    "start": start_date,
-                    "end": end_date
-                }
-            }
-        }
-        
-    except ValueError as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Invalid date format: {str(e)}. Please use YYYY-MM-DD format."
-            }],
-            "isError": True
-        }
-    except Exception as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Error fetching activity data: {str(e)}"
-            }],
-            "isError": True
-        }
-
-
-@mcp.tool()
-async def get_readiness_data(
-    start_date: str = Field(description="Start date in YYYY-MM-DD format"),
-    end_date: Optional[str] = Field(None, description="End date in YYYY-MM-DD format (defaults to start_date)")
-) -> dict:
-    """Get readiness scores from Oura for a specified date range."""
-    
-    if not oura_client:
-        return {
-            "content": [{
-                "type": "text",
-                "text": "Oura API token not configured. Please set OURA_API_TOKEN environment variable."
-            }],
-            "isError": True
-        }
-    
-    try:
-        # Validate dates
-        datetime.strptime(start_date, "%Y-%m-%d")
-        if end_date:
-            datetime.strptime(end_date, "%Y-%m-%d")
-        else:
-            end_date = start_date
-        
-        # Fetch readiness data
-        params = {
-            "start_date": start_date,
-            "end_date": end_date
-        }
-        
-        data = await oura_client.fetch_with_retry("daily_readiness", params)
-        
-        if data.get("isError"):
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": data.get("error", "Failed to fetch readiness data")
-                }],
-                "isError": True
-            }
-        
-        readiness_data = data.get("data", [])
-        
-        if not readiness_data:
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": f"No readiness data found for {start_date} to {end_date}"
-                }],
-                "structuredContent": {
-                    "readiness": [],
-                    "date_range": {
-                        "start": start_date,
-                        "end": end_date
-                    }
-                }
-            }
-        
-        # Format readiness data
-        formatted_readiness = []
-        for readiness in readiness_data:
-            contributors = readiness.get("contributors", {})
-            formatted_readiness.append({
-                "date": readiness.get("day"),
-                "readiness_score": readiness.get("score"),
-                "temperature_deviation": readiness.get("temperature_deviation"),
-                "temperature_trend_deviation": readiness.get("temperature_trend_deviation"),
-                "contributors": {
-                    "activity_balance": contributors.get("activity_balance"),
-                    "body_temperature": contributors.get("body_temperature"),
-                    "hrv_balance": contributors.get("hrv_balance"),
-                    "previous_day_activity": contributors.get("previous_day_activity"),
-                    "previous_night": contributors.get("previous_night"),
-                    "recovery_index": contributors.get("recovery_index"),
-                    "resting_heart_rate": contributors.get("resting_heart_rate"),
-                    "sleep_balance": contributors.get("sleep_balance")
-                }
-            })
-        
-        summary_text = f"Found {len(formatted_readiness)} day(s) of readiness data from {start_date} to {end_date}."
-        if formatted_readiness:
-            latest = formatted_readiness[0]
-            summary_text += f" Latest readiness score: {latest['readiness_score']}"
-        
-        return {
-            "content": [{
-                "type": "text",
-                "text": summary_text
-            }],
-            "structuredContent": {
-                "readiness": formatted_readiness,
-                "date_range": {
-                    "start": start_date,
-                    "end": end_date
-                }
-            }
-        }
-        
-    except ValueError as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Invalid date format: {str(e)}. Please use YYYY-MM-DD format."
-            }],
-            "isError": True
-        }
-    except Exception as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Error fetching readiness data: {str(e)}"
-            }],
-            "isError": True
-        }
-
-
-@mcp.tool()
-async def get_heart_rate_data(
-    start_datetime: str = Field(description="Start datetime in YYYY-MM-DDTHH:MM:SS format"),
-    end_datetime: Optional[str] = Field(None, description="End datetime in YYYY-MM-DDTHH:MM:SS format (defaults to 24 hours after start)")
-) -> dict:
-    """Get heart rate data from Oura for a specified time range."""
-    
-    if not oura_client:
-        return {
-            "content": [{
-                "type": "text",
-                "text": "Oura API token not configured. Please set OURA_API_TOKEN environment variable."
-            }],
-            "isError": True
-        }
-    
-    try:
-        # Parse and validate datetime
-        start_dt = datetime.fromisoformat(start_datetime.replace('Z', '+00:00'))
-        if end_datetime:
-            end_dt = datetime.fromisoformat(end_datetime.replace('Z', '+00:00'))
-        else:
-            end_dt = start_dt + timedelta(days=1)
-        
-        # Fetch heart rate data
-        params = {
-            "start_datetime": start_dt.isoformat(),
-            "end_datetime": end_dt.isoformat()
-        }
-        
-        data = await oura_client.fetch_with_retry("heartrate", params)
-        
-        if data.get("isError"):
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": data.get("error", "Failed to fetch heart rate data")
-                }],
-                "isError": True
-            }
-        
-        heart_rate_data = data.get("data", [])
-        
-        if not heart_rate_data:
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": f"No heart rate data found for the specified time range"
-                }],
-                "structuredContent": {
-                    "heart_rate_samples": [],
-                    "time_range": {
-                        "start": start_datetime,
-                        "end": end_datetime or end_dt.isoformat()
-                    }
-                }
-            }
-        
-        # Calculate statistics
-        bpms = [hr.get("bpm") for hr in heart_rate_data if hr.get("bpm")]
-        
-        stats = {
-            "count": len(heart_rate_data),
-            "average_bpm": sum(bpms) / len(bpms) if bpms else 0,
-            "min_bpm": min(bpms) if bpms else 0,
-            "max_bpm": max(bpms) if bpms else 0
-        }
-        
-        # Sample the data if too many points
-        if len(heart_rate_data) > 500:
-            step = len(heart_rate_data) // 500
-            sampled_data = heart_rate_data[::step]
-        else:
-            sampled_data = heart_rate_data
-        
-        summary_text = f"Found {stats['count']} heart rate measurements. "
-        summary_text += f"Average: {stats['average_bpm']:.0f} bpm, "
-        summary_text += f"Range: {stats['min_bpm']}-{stats['max_bpm']} bpm"
-        
-        return {
-            "content": [{
-                "type": "text",
-                "text": summary_text
-            }],
-            "structuredContent": {
-                "heart_rate_samples": sampled_data,
-                "statistics": stats,
-                "time_range": {
-                    "start": start_datetime,
-                    "end": end_datetime or end_dt.isoformat()
-                }
-            }
-        }
-        
-    except ValueError as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Invalid datetime format: {str(e)}. Please use YYYY-MM-DDTHH:MM:SS format."
-            }],
-            "isError": True
-        }
-    except Exception as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Error fetching heart rate data: {str(e)}"
-            }],
-            "isError": True
-        }
-
-
-@mcp.tool()
-async def get_personal_info() -> dict:
-    """Get personal/profile information from Oura."""
-    
-    if not oura_client:
-        return {
-            "content": [{
-                "type": "text",
-                "text": "Oura API token not configured. Please set OURA_API_TOKEN environment variable."
-            }],
-            "isError": True
-        }
-    
-    try:
-        # Fetch personal info
-        data = await oura_client.fetch_with_retry("personal_info")
-        
-        if data.get("isError"):
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": data.get("error", "Failed to fetch personal information")
-                }],
-                "isError": True
-            }
-        
-        # Format personal info
-        info = {
-            "age": data.get("age"),
-            "weight": data.get("weight"),
-            "height": data.get("height"),
-            "biological_sex": data.get("biological_sex"),
-            "email": data.get("email")
-        }
-        
-        summary_text = "Retrieved Oura user profile information"
-        if info.get("email"):
-            summary_text += f" for {info['email']}"
-        
-        return {
-            "content": [{
-                "type": "text",
-                "text": summary_text
-            }],
-            "structuredContent": {
-                "personal_info": info
-            }
-        }
-        
-    except Exception as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Error fetching personal information: {str(e)}"
+                "text": f"Error fetching stress and resilience data: {str(e)}"
             }],
             "isError": True
         }
@@ -606,7 +280,7 @@ def main():
         print("Warning: OURA_API_TOKEN not set. The server will start but API calls will fail.")
         print("Please set your Oura API token in the environment or .env file.")
     
-    print(f"Starting Oura MCP server on port {port}")
+    print(f"Starting Oura Stress & Resilience MCP server on port {port}")
     print(f"Server will listen on 0.0.0.0:{port}")
     
     # Run the MCP server - bind to 0.0.0.0 for Railway
@@ -614,5 +288,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import asyncio
     main()

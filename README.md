@@ -1,15 +1,34 @@
-# Oura MCP Tool
+# Oura Stress & Resilience MCP Tool
 
-An MCP-compatible tool for accessing Oura Ring health data through the Dreamer platform.
+An MCP-compatible tool for accessing Oura Ring stress and resilience data through the Dreamer platform.
 
-## Features
+## What it does
 
-This tool provides access to various Oura health metrics:
-- Sleep data and analysis
-- Daily activity metrics
-- Heart rate and HRV data
-- Readiness scores
-- Temperature trends
+Returns today's **stress load** (time spent in high stress vs. high recovery) and **resilience level** with its 3 contributors: sleep recovery, daytime recovery, and overall stress load.
+
+## Why it matters
+
+Readiness tells you what your capacity is today. Stress and Resilience tell you **why** it might be declining. If someone has low readiness, is it because they slept poorly? Or because they've been running at a 4:1 stress-to-recovery ratio all week and aren't getting any daytime rest?
+
+## Tool Response Format
+
+```json
+{
+  "stress": {
+    "highStressSeconds": 14400,   // 4 hours
+    "recoverySeconds": 3600,       // 1 hour  
+    "ratio": 4.0,                   // stress:recovery
+    "daySummary": "stressful"
+  },
+  "resilience": {
+    "level": "limited",
+    "contributors": {
+      "sleepRecovery": 65,
+      "daytimeRecovery": 42, 
+      "stress": 38
+    }
+  }
+}
 
 ## Setup
 
@@ -58,13 +77,15 @@ This tool can be deployed to any platform that supports Python web applications:
 
 Make sure to set the `OURA_API_TOKEN` environment variable in your deployment platform.
 
-## Available Tools
+## Available Tool
 
-- `get_sleep_data`: Retrieve sleep data for a date range
-- `get_activity_data`: Get daily activity metrics
-- `get_readiness_data`: Access readiness scores
-- `get_heart_rate_data`: Fetch heart rate and HRV data
-- `get_personal_info`: Get user profile information
+- `get_stress_and_resilience`: Get stress load and resilience data for a specific date (defaults to today)
+
+### Key Features
+- **Actionable ratio**: Computing stress:recovery ratio (4:1 is concerning) rather than raw seconds
+- **Combined data**: Merges Oura's separate `/daily_stress` and `/daily_resilience` endpoints into one call
+- **Smart defaults**: Uses today's date if none specified  
+- **Resilience context**: Shows the 3 contributing factors that explain capacity changes
 
 ## License
 
