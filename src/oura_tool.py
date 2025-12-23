@@ -144,7 +144,8 @@ async def oauth_server_metadata():
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "response_types_supported": ["code"],
         "token_endpoint_auth_methods_supported": ["none"],
-        "scopes_supported": ["stress:read", "resilience:read"]
+        "scopes_supported": ["stress:read", "resilience:read"],
+        "resource_indicators_supported": True
     }
 
 @app.get("/.well-known/oauth-protected-resource")
@@ -219,8 +220,8 @@ async def authorize_endpoint(
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
         "state": state,
-        "status": "pending",
-        "expires_at": datetime.now().timestamp() + 600  # 10 minutes
+        "status": "pending", 
+        "expires_at": datetime.now().timestamp() + 1800  # 30 minutes
     }
     
     # Redirect to Oura connection page
@@ -242,8 +243,9 @@ async def token_endpoint(request: Request):
             redirect_uri = form_data.get("redirect_uri")
             client_id = form_data.get("client_id") 
             code_verifier = form_data.get("code_verifier")
+            resource = form_data.get("resource")  # RFC 8707 Resource Indicators
             
-            print(f"Token exchange: code={code}, client_id={client_id}, verifier={'Yes' if code_verifier else 'No'}")
+            print(f"Token exchange: code={code}, client_id={client_id}, verifier={'Yes' if code_verifier else 'No'}, resource={resource}")
             
             # Validate authorization code
             if code not in authorization_codes:
