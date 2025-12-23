@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import uuid
@@ -100,7 +100,9 @@ async def oauth_metadata():
         "token_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": ["oura:read"],
         "response_modes_supported": ["query"],
-        "subject_types_supported": ["public"]
+        "subject_types_supported": ["public"],
+        "revocation_endpoint": f"{BASE_URL}/oauth/revoke",
+        "revocation_endpoint_auth_methods_supported": ["none"]
     }
     print(f"OAuth metadata requested, returning: {metadata}")
     return metadata
@@ -247,12 +249,14 @@ async def exchange_token(request: Request):
         
         print(f"Generated access token: {access_token}")
         
-        return {
+        response = {
             "access_token": access_token,
             "token_type": "Bearer",
             "expires_in": 3600,
             "scope": auth_data.get("scope", "")
         }
+        print(f"Token response: {response}")
+        return response
         
     except HTTPException:
         raise
@@ -509,6 +513,20 @@ async def mcp_info():
         "methods": ["initialize", "tools/list", "tools/call"]
     }
 
+# MCP OPTIONS for CORS
+@app.options("/mcp")
+async def mcp_options():
+    """Handle OPTIONS requests for CORS"""
+    return Response(
+        content="",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Max-Age": "86400"
+        }
+    )
+
 # Protected MCP endpoint
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
@@ -688,6 +706,21 @@ async def catch_all(request: Request, path: str):
         except:
             pass
     raise HTTPException(status_code=404, detail=f"Path not found: /{path}")
+
+# OAuth revoke endpoint (stub)
+@app.post("/oauth/revoke")
+async def revoke_token(request: Request):
+    """Token revocation endpoint"""
+    form_data = await request.form()
+    token = form_data.get("token")
+    print(f"Token revocation requested for: {token}")
+    
+    # Remove token if it exists
+    if token and token in access_tokens:
+        del access_tokens[token]
+    
+    # Always return 200 OK per RFC 7009
+    return {"revoked": True}
 
 def main():
     """Run the server"""
