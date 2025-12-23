@@ -207,56 +207,118 @@ async def exchange_token(request: Request):
             print(f"Token request form data: {form_data}")
         
         grant_type = form_data.get("grant_type")
-        if grant_type != "authorization_code":
-            raise HTTPException(status_code=400, detail=f"Unsupported grant type: {grant_type}")
         
-        code = form_data.get("code")
-        client_id = form_data.get("client_id")
-        code_verifier = form_data.get("code_verifier")
-        
-        print(f"Exchanging code: {code} for client: {client_id}")
-        
-        # Find authorization session
-        if code not in auth_codes:
-            print(f"Code not found. Available codes: {list(auth_codes.keys())}")
-            raise HTTPException(status_code=400, detail="Invalid authorization code")
-        
-        auth_data = auth_codes[code]
-        
-        # Validate PKCE if present
-        if auth_data.get("code_challenge") and code_verifier:
-            expected_challenge = base64.urlsafe_b64encode(
-                hashlib.sha256(code_verifier.encode()).digest()
-            ).decode().rstrip('=')
+        if grant_type == "authorization_code":
+            code = form_data.get("code")
+            client_id = form_data.get("client_id")
+            code_verifier = form_data.get("code_verifier")
             
-            if expected_challenge != auth_data["code_challenge"]:
-                raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
+            print(f"Exchanging code: {code} for client: {client_id}")
+            
+            # Find authorization session
+            if code not in auth_codes:
+                print(f"Code not found. Available codes: {list(auth_codes.keys())}")
+                raise HTTPException(status_code=400, detail="Invalid authorization code")
+            
+            auth_data = auth_codes[code]
+            
+            # Validate PKCE if present
+            if auth_data.get("code_challenge") and code_verifier:
+                expected_challenge = base64.urlsafe_b64encode(
+                    hashlib.sha256(code_verifier.encode()).digest()
+                ).decode().rstrip('=')
+                
+                if expected_challenge != auth_data["code_challenge"]:
+                    raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
+            
+            # Generate tokens
+            access_token = str(uuid.uuid4())
+            refresh_token = str(uuid.uuid4())
+            
+            # Store access token
+            access_tokens[access_token] = {
+                "client_id": client_id,
+                "user_id": auth_data.get("user_id", "anonymous"),
+                "scope": auth_data.get("scope", ""),
+                "created_at": datetime.now().isoformat(),
+                "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
+                "refresh_token": refresh_token
+            }
+            
+            # Store refresh token (longer expiry)
+            access_tokens[refresh_token] = {
+                "client_id": client_id,
+                "user_id": auth_data.get("user_id", "anonymous"),
+                "scope": auth_data.get("scope", ""),
+                "created_at": datetime.now().isoformat(),
+                "expires_at": (datetime.now() + timedelta(days=30)).isoformat(),
+                "is_refresh_token": True
+            }
+            
+            # Clean up authorization code
+            del auth_codes[code]
+            
+            print(f"Generated access token: {access_token}")
+            print(f"Generated refresh token: {refresh_token}")
+            
+            response = {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": refresh_token,
+                "scope": auth_data.get("scope", "")
+            }
+            print(f"Token response: {response}")
+            return response
         
-        # Generate access token
-        access_token = str(uuid.uuid4())
+        elif grant_type == "refresh_token":
+            # Handle refresh token grant
+            refresh_token = form_data.get("refresh_token")
+            client_id = form_data.get("client_id")
+            
+            print(f"Refresh token request: token={refresh_token}, client={client_id}")
+            
+            if not refresh_token or refresh_token not in access_tokens:
+                raise HTTPException(status_code=400, detail="Invalid refresh token")
+            
+            token_data = access_tokens[refresh_token]
+            
+            # Verify it's a refresh token
+            if not token_data.get("is_refresh_token"):
+                raise HTTPException(status_code=400, detail="Invalid refresh token")
+            
+            # Check expiration
+            expires_at = datetime.fromisoformat(token_data["expires_at"])
+            if datetime.now() > expires_at:
+                del access_tokens[refresh_token]
+                raise HTTPException(status_code=400, detail="Refresh token expired")
+            
+            # Generate new access token
+            new_access_token = str(uuid.uuid4())
+            
+            # Store new access token
+            access_tokens[new_access_token] = {
+                "client_id": client_id or token_data["client_id"],
+                "user_id": token_data["user_id"],
+                "scope": token_data["scope"],
+                "created_at": datetime.now().isoformat(),
+                "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
+                "refresh_token": refresh_token
+            }
+            
+            response = {
+                "access_token": new_access_token,
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": refresh_token,
+                "scope": token_data["scope"]
+            }
+            
+            print(f"Refresh token response: {response}")
+            return response
         
-        # Store token
-        access_tokens[access_token] = {
-            "client_id": client_id,
-            "user_id": auth_data.get("user_id", "anonymous"),
-            "scope": auth_data.get("scope", ""),
-            "created_at": datetime.now().isoformat(),
-            "expires_at": (datetime.now() + timedelta(hours=1)).isoformat()
-        }
-        
-        # Clean up authorization code
-        del auth_codes[code]
-        
-        print(f"Generated access token: {access_token}")
-        
-        response = {
-            "access_token": access_token,
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "scope": auth_data.get("scope", "")
-        }
-        print(f"Token response: {response}")
-        return response
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported grant type: {grant_type}")
         
     except HTTPException:
         raise
