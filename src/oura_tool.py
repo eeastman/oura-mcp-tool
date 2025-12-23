@@ -23,9 +23,9 @@ load_dotenv()
 
 # Get configuration from environment
 OURA_API_BASE_URL = "https://api.ouraring.com/v2/usercollection"
-AUTH_SERVER_URL = os.getenv('AUTH_SERVER_URL', 'https://auth-oura-stress.railway.app')
-TOOL_SERVER_URL = os.getenv('TOOL_SERVER_URL', 'https://oura-stress-resilience.railway.app')
-JWT_SECRET = os.getenv('JWT_SECRET', 'your-super-secret-key-change-this-in-production')
+AUTH_SERVER_URL = os.getenv('AUTH_SERVER_URL', 'http://localhost:8080')
+TOOL_SERVER_URL = os.getenv('TOOL_SERVER_URL', 'http://localhost:8080') 
+JWT_SECRET = os.getenv('JWT_SECRET', 'dev-secret-change-in-production')
 
 # Oura OAuth Configuration
 OURA_CLIENT_ID = os.getenv('OURA_CLIENT_ID')
@@ -155,7 +155,6 @@ async def dynamic_client_registration(request: Request):
         client_data = await request.json()
         
         # Generate client ID
-        import uuid
         client_id = str(uuid.uuid4())
         
         # Store client info
@@ -201,7 +200,6 @@ async def authorize_endpoint(
         raise HTTPException(status_code=400, detail="Invalid redirect_uri")
     
     # Store the authorization request details
-    import uuid
     session_id = str(uuid.uuid4())
     
     # Store pending authorization request
@@ -260,7 +258,6 @@ async def token_endpoint(request: Request):
                     raise HTTPException(status_code=400, detail="Invalid code_verifier")
             
             # Generate tokens
-            import uuid
             access_token = str(uuid.uuid4())
             refresh_token = str(uuid.uuid4())
             
@@ -288,7 +285,6 @@ async def token_endpoint(request: Request):
             refresh_token = form_data.get("refresh_token")
             
             # Generate new access token
-            import uuid
             new_access_token = str(uuid.uuid4())
             
             access_tokens[new_access_token] = {
@@ -419,7 +415,6 @@ async def connect_oura_page(session_id: str):
     
     else:
         # Generate Oura OAuth URL
-        import urllib.parse
         oura_state = str(uuid.uuid4())
         
         # Store Oura OAuth state linked to our session
@@ -433,6 +428,7 @@ async def connect_oura_page(session_id: str):
             "state": oura_state
         }
         
+        import urllib.parse
         oura_auth_url = f"{OURA_AUTHORIZE_URL}?{urllib.parse.urlencode(oura_params)}"
         
         # Show OAuth connection page
@@ -487,7 +483,6 @@ async def oura_manual_token(request: Request):
     session_data = authorization_codes[session_id]
     
     # Generate authorization code for our OAuth flow
-    import uuid
     auth_code = str(uuid.uuid4())
     
     # Store the Oura token for this user session
@@ -558,7 +553,6 @@ async def oura_oauth_callback(code: str, state: str, error: str = None):
         }
         
         # Generate authorization code for our OAuth flow
-        import uuid
         auth_code = str(uuid.uuid4())
         
         # Update session data
@@ -906,13 +900,14 @@ def main():
     
     # Debug: Print environment info
     print(f"Starting OAuth-protected server with PORT={port}")
-    print(f"OURA_API_TOKEN present: {'Yes' if os.environ.get('OURA_API_TOKEN') else 'No'}")
+    print(f"OURA_CLIENT_ID present: {'Yes' if OURA_CLIENT_ID else 'No'}")
     print(f"AUTH_SERVER_URL: {AUTH_SERVER_URL}")
     print(f"TOOL_SERVER_URL: {TOOL_SERVER_URL}")
     
-    if not OURA_API_TOKEN:
-        print("Warning: OURA_API_TOKEN not set. The server will start but API calls will fail.")
-        print("Please set your Oura API token in the environment or .env file.")
+    if not OURA_CLIENT_ID or not OURA_CLIENT_SECRET:
+        print("Info: Oura OAuth not configured - will use manual token entry fallback")
+    else:
+        print("Oura OAuth configured - users can connect via OAuth flow")
     
     print(f"Starting Oura Stress & Resilience OAuth + MCP server on port {port}")
     print(f"Server will listen on 0.0.0.0:{port}")
