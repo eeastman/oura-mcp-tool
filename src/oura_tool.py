@@ -910,6 +910,7 @@ def main():
     # Debug: Print environment info
     print(f"Starting OAuth-protected server with PORT={port}")
     print(f"OURA_CLIENT_ID present: {'Yes' if OURA_CLIENT_ID else 'No'}")
+    print(f"RAILWAY_PUBLIC_DOMAIN: {RAILWAY_PUBLIC_DOMAIN}")
     print(f"AUTH_SERVER_URL: {AUTH_SERVER_URL}")
     print(f"TOOL_SERVER_URL: {TOOL_SERVER_URL}")
     
