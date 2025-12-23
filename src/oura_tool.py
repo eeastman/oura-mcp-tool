@@ -11,20 +11,28 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 import jwt
 import json
+import uuid
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
 
 # Get configuration from environment
-OURA_API_TOKEN = os.getenv('OURA_API_TOKEN')
 OURA_API_BASE_URL = "https://api.ouraring.com/v2/usercollection"
 AUTH_SERVER_URL = os.getenv('AUTH_SERVER_URL', 'https://auth-oura-stress.railway.app')
 TOOL_SERVER_URL = os.getenv('TOOL_SERVER_URL', 'https://oura-stress-resilience.railway.app')
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-super-secret-key-change-this-in-production')
+
+# Oura OAuth Configuration
+OURA_CLIENT_ID = os.getenv('OURA_CLIENT_ID')
+OURA_CLIENT_SECRET = os.getenv('OURA_CLIENT_SECRET')
+OURA_AUTHORIZE_URL = "https://cloud.ouraring.com/oauth/authorize"
+OURA_TOKEN_URL = "https://api.ouraring.com/oauth/token"
+OURA_REDIRECT_URI = f"{TOOL_SERVER_URL}/oauth/oura/callback"
 
 # Initialize FastMCP server
 mcp = FastMCP("oura-stress-resilience", version="1.0.0")
@@ -51,6 +59,15 @@ class OuraAPIClient:
         self.headers = {
             "Authorization": f"Bearer {api_token}"
         }
+    
+    @classmethod
+    def for_user(cls, user_id: str):
+        """Create client for specific user using their stored Oura token"""
+        if user_id not in user_oura_tokens:
+            return None
+        
+        user_token = user_oura_tokens[user_id]
+        return cls(user_token["access_token"])
     
     async def fetch_with_retry(self, endpoint: str, params: Optional[Dict[str, Any]] = None, max_retries: int = 3) -> Dict[str, Any]:
         """Fetch data from Oura API with retry logic"""
@@ -98,13 +115,11 @@ class OuraAPIClient:
                 }
 
 
-# Initialize the Oura client
-oura_client = OuraAPIClient(OURA_API_TOKEN) if OURA_API_TOKEN else None
-
 # Simple in-memory storage for OAuth clients (for demo - use database in production)
 oauth_clients = {}
 authorization_codes = {}
 access_tokens = {}
+user_oura_tokens = {}  # Store Oura tokens per user session
 
 # OAuth 2.0 Endpoints
 
@@ -185,28 +200,26 @@ async def authorize_endpoint(
     if redirect_uri not in client["redirect_uris"]:
         raise HTTPException(status_code=400, detail="Invalid redirect_uri")
     
-    # For demo purposes, automatically approve (in production, show user consent page)
+    # Store the authorization request details
     import uuid
-    auth_code = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
     
-    # Store authorization code with PKCE challenge
-    authorization_codes[auth_code] = {
+    # Store pending authorization request
+    authorization_codes[session_id] = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "scope": scope,
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
-        "user_id": "demo_user",  # In production, get from authenticated user
+        "state": state,
+        "status": "pending",
         "expires_at": datetime.now().timestamp() + 600  # 10 minutes
     }
     
-    # Redirect back to client with authorization code
+    # Redirect to Oura connection page
     from fastapi.responses import RedirectResponse
-    callback_url = f"{redirect_uri}?code={auth_code}"
-    if state:
-        callback_url += f"&state={state}"
-    
-    return RedirectResponse(url=callback_url)
+    connect_url = f"{TOOL_SERVER_URL}/connect-oura?session_id={session_id}"
+    return RedirectResponse(url=connect_url)
 
 @app.post("/oauth/token") 
 async def token_endpoint(request: Request):
@@ -333,6 +346,240 @@ async def validate_bearer_token(request: Request):
     return token_data
 
 
+# Oura OAuth Integration
+@app.get("/connect-oura")
+async def connect_oura_page(session_id: str):
+    """Show Oura connection page"""
+    
+    # Validate session
+    if session_id not in authorization_codes:
+        raise HTTPException(status_code=400, detail="Invalid session")
+    
+    session_data = authorization_codes[session_id]
+    if session_data.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Session already processed")
+    
+    if datetime.now().timestamp() > session_data["expires_at"]:
+        del authorization_codes[session_id]
+        raise HTTPException(status_code=400, detail="Session expired")
+    
+    # Check if Oura OAuth is configured
+    if not OURA_CLIENT_ID or not OURA_CLIENT_SECRET:
+        # Show manual token entry page
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Connect Your Oura Account</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }}
+                .container {{ background: #f5f5f5; padding: 30px; border-radius: 10px; }}
+                .warning {{ background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
+                input[type="text"] {{ width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; }}
+                button {{ background: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }}
+                button:hover {{ background: #0056b3; }}
+                .step {{ margin: 15px 0; padding: 15px; background: white; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🔗 Connect Your Oura Account</h1>
+                
+                <div class="warning">
+                    <strong>Developer Setup Required:</strong> This tool needs Oura OAuth credentials to be configured.
+                </div>
+                
+                <p>To use this tool, you need to connect your Oura account. Since OAuth isn't configured yet, please enter your personal Oura API token:</p>
+                
+                <div class="step">
+                    <strong>Step 1:</strong> Go to <a href="https://cloud.ouraring.com/personal-access-tokens" target="_blank">Oura Cloud</a>
+                </div>
+                <div class="step">
+                    <strong>Step 2:</strong> Create a new Personal Access Token
+                </div>
+                <div class="step">
+                    <strong>Step 3:</strong> Copy and paste the token below
+                </div>
+                
+                <form action="/oauth/oura/manual" method="post">
+                    <input type="hidden" name="session_id" value="{session_id}">
+                    <label for="oura_token">Oura API Token:</label>
+                    <input type="text" id="oura_token" name="oura_token" placeholder="Enter your Oura personal access token" required>
+                    <button type="submit">Connect Account</button>
+                </form>
+                
+                <p style="font-size: 12px; color: #666; margin-top: 20px;">
+                    Your token is stored securely and only used to access your Oura data for this session.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
+    
+    else:
+        # Generate Oura OAuth URL
+        import urllib.parse
+        oura_state = str(uuid.uuid4())
+        
+        # Store Oura OAuth state linked to our session
+        authorization_codes[session_id]["oura_state"] = oura_state
+        
+        oura_params = {
+            "response_type": "code",
+            "client_id": OURA_CLIENT_ID,
+            "redirect_uri": OURA_REDIRECT_URI,
+            "scope": "daily personal",  # Scopes needed for stress/resilience data
+            "state": oura_state
+        }
+        
+        oura_auth_url = f"{OURA_AUTHORIZE_URL}?{urllib.parse.urlencode(oura_params)}"
+        
+        # Show OAuth connection page
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Connect Your Oura Account</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }}
+                .container {{ background: #f5f5f5; padding: 30px; border-radius: 10px; }}
+                .btn {{ background: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-size: 18px; }}
+                .btn:hover {{ background: #0056b3; }}
+                .info {{ background: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🔗 Connect Your Oura Account</h1>
+                <p>To use the Stress & Resilience tool, you need to connect your Oura account.</p>
+                
+                <div class="info">
+                    <strong>What we'll access:</strong><br>
+                    • Daily stress and recovery data<br>
+                    • Personal profile information<br>
+                    • No personal health data is stored permanently
+                </div>
+                
+                <p>Click below to authorize access to your Oura data:</p>
+                
+                <a href="{oura_auth_url}" class="btn">Connect Oura Account</a>
+                
+                <p style="font-size: 12px; color: #666; margin-top: 30px;">
+                    You'll be redirected to Oura's secure login page. After authorization, you'll be returned here.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
+
+@app.post("/oauth/oura/manual")
+async def oura_manual_token(request: Request):
+    """Handle manual Oura token entry"""
+    form_data = await request.form()
+    session_id = form_data.get("session_id")
+    oura_token = form_data.get("oura_token")
+    
+    if session_id not in authorization_codes:
+        raise HTTPException(status_code=400, detail="Invalid session")
+    
+    session_data = authorization_codes[session_id]
+    
+    # Generate authorization code for our OAuth flow
+    import uuid
+    auth_code = str(uuid.uuid4())
+    
+    # Store the Oura token for this user session
+    user_id = f"manual_user_{session_id}"
+    user_oura_tokens[user_id] = {
+        "access_token": oura_token,
+        "token_type": "Bearer",
+        "created_at": datetime.now().timestamp()
+    }
+    
+    # Update authorization code with user_id
+    session_data["user_id"] = user_id
+    session_data["status"] = "authorized"
+    
+    # Move to our authorization codes with the final auth code
+    authorization_codes[auth_code] = session_data
+    del authorization_codes[session_id]
+    
+    # Redirect back to Dreamer
+    callback_url = f"{session_data['redirect_uri']}?code={auth_code}"
+    if session_data["state"]:
+        callback_url += f"&state={session_data['state']}"
+    
+    return RedirectResponse(url=callback_url)
+
+@app.get("/oauth/oura/callback")
+async def oura_oauth_callback(code: str, state: str, error: str = None):
+    """Handle Oura OAuth callback"""
+    
+    if error:
+        raise HTTPException(status_code=400, detail=f"Oura OAuth error: {error}")
+    
+    # Find session by Oura state
+    session_id = None
+    for sid, data in authorization_codes.items():
+        if data.get("oura_state") == state:
+            session_id = sid
+            break
+    
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    
+    session_data = authorization_codes[session_id]
+    
+    # Exchange code for Oura access token
+    token_data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": OURA_REDIRECT_URI,
+        "client_id": OURA_CLIENT_ID,
+        "client_secret": OURA_CLIENT_SECRET
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(OURA_TOKEN_URL, data=token_data)
+            response.raise_for_status()
+            oura_tokens = response.json()
+        
+        # Store Oura tokens for this user
+        user_id = f"oauth_user_{session_id}"
+        user_oura_tokens[user_id] = {
+            "access_token": oura_tokens["access_token"],
+            "token_type": oura_tokens.get("token_type", "Bearer"),
+            "refresh_token": oura_tokens.get("refresh_token"),
+            "created_at": datetime.now().timestamp(),
+            "expires_in": oura_tokens.get("expires_in", 86400)
+        }
+        
+        # Generate authorization code for our OAuth flow
+        import uuid
+        auth_code = str(uuid.uuid4())
+        
+        # Update session data
+        session_data["user_id"] = user_id
+        session_data["status"] = "authorized"
+        
+        # Move to final authorization codes
+        authorization_codes[auth_code] = session_data
+        del authorization_codes[session_id]
+        
+        # Redirect back to Dreamer
+        callback_url = f"{session_data['redirect_uri']}?code={auth_code}"
+        if session_data["state"]:
+            callback_url += f"&state={session_data['state']}"
+        
+        return RedirectResponse(url=callback_url)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to exchange Oura token: {str(e)}")
+
+
 def calculate_stress_ratio(high_stress_seconds: int, recovery_seconds: int) -> float:
     """Calculate stress:recovery ratio, handling division by zero"""
     if recovery_seconds == 0:
@@ -368,23 +615,18 @@ def get_resilience_level(contributors: Dict[str, int]) -> str:
         return "low"
 
 
-@mcp.tool()
-async def get_stress_and_resilience(
-    user_id: Optional[str] = Field(None, description="User ID (not required for personal tokens)"),
-    date_param: Optional[str] = Field(None, description="Date in YYYY-MM-DD format (defaults to today)")
-) -> dict:
+async def get_stress_and_resilience_internal(user_id: str, date_param: Optional[str] = None) -> dict:
     """
-    Returns today's stress load (time in high stress vs. recovery) and resilience level.
-    
-    Provides actionable stress:recovery ratio and resilience context to understand
-    capacity decline patterns beyond just readiness scores.
+    Internal function to get stress and resilience data for a specific user.
     """
     
+    # Get user's Oura client
+    oura_client = OuraAPIClient.for_user(user_id)
     if not oura_client:
         return {
             "content": [{
                 "type": "text",
-                "text": "Oura API token not configured. Please set OURA_API_TOKEN environment variable."
+                "text": "Oura account not connected. Please connect your Oura account first."
             }],
             "isError": True
         }
@@ -518,6 +760,31 @@ async def get_stress_and_resilience(
             "isError": True
         }
 
+@mcp.tool()
+async def get_stress_and_resilience(
+    user_id: Optional[str] = Field(None, description="User ID (not required for personal tokens)"),
+    date_param: Optional[str] = Field(None, description="Date in YYYY-MM-DD format (defaults to today)")
+) -> dict:
+    """
+    Returns today's stress load (time in high stress vs. recovery) and resilience level.
+    
+    Provides actionable stress:recovery ratio and resilience context to understand
+    capacity decline patterns beyond just readiness scores.
+    """
+    
+    # This is called from the MCP endpoint which should have token_data in request state
+    # For now, we'll use a placeholder since this function needs to be restructured
+    if not user_id:
+        return {
+            "content": [{
+                "type": "text",
+                "text": "User authentication required. This tool requires Oura account connection."
+            }],
+            "isError": True
+        }
+    
+    return await get_stress_and_resilience_internal(user_id, date_param)
+
 
 # Protected MCP endpoint
 @app.post("/mcp")
@@ -567,10 +834,10 @@ async def protected_mcp_endpoint(request: Request):
         elif mcp_request.get("method") == "tools/call":
             params = mcp_request.get("params", {})
             if params.get("name") == "get_stress_and_resilience":
-                # Call our tool function with the provided arguments
+                # Call our internal function with the user from the token
                 args = params.get("arguments", {})
-                result = await get_stress_and_resilience(
-                    user_id=args.get("user_id"),
+                result = await get_stress_and_resilience_internal(
+                    user_id=token_data["user_id"],
                     date_param=args.get("date_param")
                 )
                 
