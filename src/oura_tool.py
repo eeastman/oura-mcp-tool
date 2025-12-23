@@ -498,9 +498,6 @@ async def oura_manual_token(request: Request):
     
     session_data = authorization_codes[session_id]
     
-    # Generate authorization code for our OAuth flow
-    auth_code = str(uuid.uuid4())
-    
     # Store the Oura token for this user session
     user_id = f"manual_user_{session_id}"
     user_oura_tokens[user_id] = {
@@ -509,18 +506,21 @@ async def oura_manual_token(request: Request):
         "created_at": datetime.now().timestamp()
     }
     
-    # Update authorization code with user_id
+    # Update the existing session data instead of creating new auth code
     session_data["user_id"] = user_id
     session_data["status"] = "authorized"
     
-    # Move to our authorization codes with the final auth code
-    authorization_codes[auth_code] = session_data
+    # Generate new authorization code for the final redirect
+    final_auth_code = str(uuid.uuid4())
+    authorization_codes[final_auth_code] = session_data.copy()
     del authorization_codes[session_id]
     
     # Redirect back to Dreamer
-    callback_url = f"{session_data['redirect_uri']}?code={auth_code}"
-    if session_data["state"]:
+    callback_url = f"{session_data['redirect_uri']}?code={final_auth_code}"
+    if session_data.get("state"):
         callback_url += f"&state={session_data['state']}"
+    
+    print(f"Redirecting to Dreamer: {callback_url[:100]}...")
     
     return RedirectResponse(url=callback_url)
 
@@ -569,20 +569,22 @@ async def oura_oauth_callback(code: str, state: str, error: str = None):
         }
         
         # Generate authorization code for our OAuth flow
-        auth_code = str(uuid.uuid4())
+        final_auth_code = str(uuid.uuid4())
         
         # Update session data
         session_data["user_id"] = user_id
         session_data["status"] = "authorized"
         
         # Move to final authorization codes
-        authorization_codes[auth_code] = session_data
+        authorization_codes[final_auth_code] = session_data.copy()
         del authorization_codes[session_id]
         
         # Redirect back to Dreamer
-        callback_url = f"{session_data['redirect_uri']}?code={auth_code}"
-        if session_data["state"]:
+        callback_url = f"{session_data['redirect_uri']}?code={final_auth_code}"
+        if session_data.get("state"):
             callback_url += f"&state={session_data['state']}"
+        
+        print(f"OAuth callback redirecting to Dreamer: {callback_url[:100]}...")
         
         return RedirectResponse(url=callback_url)
         
