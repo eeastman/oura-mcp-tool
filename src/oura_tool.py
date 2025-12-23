@@ -213,7 +213,7 @@ async def authorize_endpoint(
     session_id = str(uuid.uuid4())
     
     # Store pending authorization request
-    authorization_codes[session_id] = {
+    session_data = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "scope": scope,
@@ -223,6 +223,9 @@ async def authorize_endpoint(
         "status": "pending", 
         "expires_at": datetime.now().timestamp() + 1800  # 30 minutes
     }
+    
+    authorization_codes[session_id] = session_data
+    print(f"Stored authorization session {session_id}: client={client_id}, challenge={code_challenge[:20]}...")
     
     # Redirect to Oura connection page
     from fastapi.responses import RedirectResponse
@@ -517,8 +520,12 @@ async def oura_manual_token(request: Request):
     
     # Generate new authorization code for the final redirect
     final_auth_code = str(uuid.uuid4())
-    authorization_codes[final_auth_code] = session_data.copy()
+    final_session_data = session_data.copy()
+    authorization_codes[final_auth_code] = final_session_data
     del authorization_codes[session_id]
+    
+    print(f"Generated final auth code {final_auth_code} for client {session_data['client_id']}")
+    print(f"PKCE challenge stored: {session_data.get('code_challenge', 'NONE')[:20]}...")
     
     # Redirect back to Dreamer
     callback_url = f"{session_data['redirect_uri']}?code={final_auth_code}"
