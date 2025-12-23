@@ -10,16 +10,37 @@ from datetime import datetime, date
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 import asyncio
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+import jwt
+import json
 
 # Load environment variables
 load_dotenv()
 
-# Get Oura API token from environment
+# Get configuration from environment
 OURA_API_TOKEN = os.getenv('OURA_API_TOKEN')
 OURA_API_BASE_URL = "https://api.ouraring.com/v2/usercollection"
+AUTH_SERVER_URL = os.getenv('AUTH_SERVER_URL', 'https://auth-oura-stress.railway.app')
+TOOL_SERVER_URL = os.getenv('TOOL_SERVER_URL', 'https://oura-stress-resilience.railway.app')
+JWT_SECRET = os.getenv('JWT_SECRET', 'your-super-secret-key-change-this-in-production')
 
 # Initialize FastMCP server
 mcp = FastMCP("oura-stress-resilience", version="1.0.0")
+
+# Initialize FastAPI app for OAuth endpoints
+app = FastAPI(title="Oura Stress & Resilience OAuth Server")
+
+# Configure CORS for Dreamer platform
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Mcp-Session-Id"]
+)
 
 
 class OuraAPIClient:
@@ -79,6 +100,237 @@ class OuraAPIClient:
 
 # Initialize the Oura client
 oura_client = OuraAPIClient(OURA_API_TOKEN) if OURA_API_TOKEN else None
+
+# Simple in-memory storage for OAuth clients (for demo - use database in production)
+oauth_clients = {}
+authorization_codes = {}
+access_tokens = {}
+
+# OAuth 2.0 Endpoints
+
+@app.get("/.well-known/oauth-authorization-server")
+async def oauth_server_metadata():
+    """OAuth 2.0 Authorization Server Metadata (RFC 8414)"""
+    return {
+        "issuer": AUTH_SERVER_URL,
+        "authorization_endpoint": f"{AUTH_SERVER_URL}/oauth/authorize",
+        "token_endpoint": f"{AUTH_SERVER_URL}/oauth/token", 
+        "registration_endpoint": f"{AUTH_SERVER_URL}/oauth/register",
+        "code_challenge_methods_supported": ["S256"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "response_types_supported": ["code"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": ["stress:read", "resilience:read"]
+    }
+
+@app.get("/.well-known/oauth-protected-resource")
+async def protected_resource_metadata():
+    """Protected Resource Metadata (RFC 9728)"""
+    return {
+        "resource": TOOL_SERVER_URL,
+        "authorization_servers": [AUTH_SERVER_URL],
+        "scopes_supported": ["stress:read", "resilience:read"], 
+        "bearer_methods_supported": ["header"]
+    }
+
+@app.post("/oauth/register")
+async def dynamic_client_registration(request: Request):
+    """Dynamic Client Registration (RFC 7591)"""
+    try:
+        client_data = await request.json()
+        
+        # Generate client ID
+        import uuid
+        client_id = str(uuid.uuid4())
+        
+        # Store client info
+        oauth_clients[client_id] = {
+            "client_id": client_id,
+            "redirect_uris": client_data.get("redirect_uris", []),
+            "client_name": client_data.get("client_name", "Unknown Client"),
+            "client_uri": client_data.get("client_uri", ""),
+            "grant_types": client_data.get("grant_types", ["authorization_code"]),
+            "response_types": client_data.get("response_types", ["code"]),
+            "token_endpoint_auth_method": client_data.get("token_endpoint_auth_method", "none")
+        }
+        
+        return {
+            "client_id": client_id,
+            "client_name": oauth_clients[client_id]["client_name"],
+            "redirect_uris": oauth_clients[client_id]["redirect_uris"],
+            "grant_types": oauth_clients[client_id]["grant_types"],
+            "response_types": oauth_clients[client_id]["response_types"],
+            "token_endpoint_auth_method": oauth_clients[client_id]["token_endpoint_auth_method"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid client registration: {str(e)}")
+
+@app.get("/oauth/authorize")
+async def authorize_endpoint(
+    response_type: str,
+    client_id: str, 
+    redirect_uri: str,
+    scope: str = "",
+    state: str = "",
+    code_challenge: str = "",
+    code_challenge_method: str = "S256"
+):
+    """OAuth 2.0 Authorization Endpoint"""
+    
+    # Validate client
+    if client_id not in oauth_clients:
+        raise HTTPException(status_code=400, detail="Invalid client_id")
+    
+    client = oauth_clients[client_id]
+    if redirect_uri not in client["redirect_uris"]:
+        raise HTTPException(status_code=400, detail="Invalid redirect_uri")
+    
+    # For demo purposes, automatically approve (in production, show user consent page)
+    import uuid
+    auth_code = str(uuid.uuid4())
+    
+    # Store authorization code with PKCE challenge
+    authorization_codes[auth_code] = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+        "user_id": "demo_user",  # In production, get from authenticated user
+        "expires_at": datetime.now().timestamp() + 600  # 10 minutes
+    }
+    
+    # Redirect back to client with authorization code
+    from fastapi.responses import RedirectResponse
+    callback_url = f"{redirect_uri}?code={auth_code}"
+    if state:
+        callback_url += f"&state={state}"
+    
+    return RedirectResponse(url=callback_url)
+
+@app.post("/oauth/token") 
+async def token_endpoint(request: Request):
+    """OAuth 2.0 Token Endpoint"""
+    try:
+        form_data = await request.form()
+        
+        grant_type = form_data.get("grant_type")
+        
+        if grant_type == "authorization_code":
+            # Authorization Code Grant
+            code = form_data.get("code")
+            redirect_uri = form_data.get("redirect_uri")
+            client_id = form_data.get("client_id") 
+            code_verifier = form_data.get("code_verifier")
+            
+            # Validate authorization code
+            if code not in authorization_codes:
+                raise HTTPException(status_code=400, detail="Invalid authorization code")
+            
+            code_data = authorization_codes[code]
+            
+            # Check expiration
+            if datetime.now().timestamp() > code_data["expires_at"]:
+                del authorization_codes[code]
+                raise HTTPException(status_code=400, detail="Authorization code expired")
+            
+            # Validate PKCE challenge
+            if code_data["code_challenge_method"] == "S256":
+                import hashlib
+                import base64
+                
+                challenge = base64.urlsafe_b64encode(
+                    hashlib.sha256(code_verifier.encode()).digest()
+                ).decode().rstrip('=')
+                
+                if challenge != code_data["code_challenge"]:
+                    raise HTTPException(status_code=400, detail="Invalid code_verifier")
+            
+            # Generate tokens
+            import uuid
+            access_token = str(uuid.uuid4())
+            refresh_token = str(uuid.uuid4())
+            
+            # Store access token
+            access_tokens[access_token] = {
+                "client_id": client_id,
+                "user_id": code_data["user_id"],
+                "scope": code_data["scope"],
+                "expires_at": datetime.now().timestamp() + 3600  # 1 hour
+            }
+            
+            # Clean up authorization code
+            del authorization_codes[code]
+            
+            return {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": refresh_token,
+                "scope": code_data["scope"]
+            }
+            
+        elif grant_type == "refresh_token":
+            # Refresh Token Grant (simplified implementation)
+            refresh_token = form_data.get("refresh_token")
+            
+            # Generate new access token
+            import uuid
+            new_access_token = str(uuid.uuid4())
+            
+            access_tokens[new_access_token] = {
+                "client_id": form_data.get("client_id"),
+                "user_id": "demo_user",
+                "scope": form_data.get("scope", ""),
+                "expires_at": datetime.now().timestamp() + 3600
+            }
+            
+            return {
+                "access_token": new_access_token,
+                "token_type": "Bearer", 
+                "expires_in": 3600,
+                "scope": form_data.get("scope", "")
+            }
+        
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported grant_type")
+            
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# Bearer token validation
+async def validate_bearer_token(request: Request):
+    """Validate Bearer token from Authorization header"""
+    auth_header = request.headers.get("Authorization")
+    
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401, 
+            detail="Missing or invalid Authorization header",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    token = auth_header[7:]  # Remove "Bearer " prefix
+    
+    if token not in access_tokens:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid access token", 
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    token_data = access_tokens[token]
+    
+    # Check expiration
+    if datetime.now().timestamp() > token_data["expires_at"]:
+        del access_tokens[token]
+        raise HTTPException(
+            status_code=401,
+            detail="Access token expired",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    return token_data
 
 
 def calculate_stress_ratio(high_stress_seconds: int, recovery_seconds: int) -> float:
@@ -267,24 +519,144 @@ async def get_stress_and_resilience(
         }
 
 
+# Protected MCP endpoint
+@app.post("/mcp")
+async def protected_mcp_endpoint(request: Request):
+    """MCP endpoint with OAuth protection"""
+    # Validate Bearer token first
+    token_data = await validate_bearer_token(request)
+    
+    # Get request body and headers
+    body = await request.body()
+    
+    # Create a simple response handler for MCP
+    try:
+        # For now, let's create a simple JSON-RPC handler for our specific tool
+        import json
+        
+        # Parse the MCP request
+        mcp_request = json.loads(body.decode())
+        
+        # Check if this is a tools/list request
+        if mcp_request.get("method") == "tools/list":
+            return {
+                "jsonrpc": "2.0", 
+                "id": mcp_request.get("id"),
+                "result": {
+                    "tools": [{
+                        "name": "get_stress_and_resilience",
+                        "description": "Get stress load and resilience data for a specific date",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "user_id": {
+                                    "type": "string",
+                                    "description": "User ID (not required for personal tokens)"
+                                },
+                                "date_param": {
+                                    "type": "string", 
+                                    "description": "Date in YYYY-MM-DD format (defaults to today)"
+                                }
+                            }
+                        }
+                    }]
+                }
+            }
+        
+        # Check if this is a tools/call request  
+        elif mcp_request.get("method") == "tools/call":
+            params = mcp_request.get("params", {})
+            if params.get("name") == "get_stress_and_resilience":
+                # Call our tool function with the provided arguments
+                args = params.get("arguments", {})
+                result = await get_stress_and_resilience(
+                    user_id=args.get("user_id"),
+                    date_param=args.get("date_param")
+                )
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": mcp_request.get("id"), 
+                    "result": result
+                }
+        
+        # Handle initialize request
+        elif mcp_request.get("method") == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": mcp_request.get("id"),
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "oura-stress-resilience",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+        
+        # Default error response
+        return {
+            "jsonrpc": "2.0",
+            "id": mcp_request.get("id"),
+            "error": {
+                "code": -32601,
+                "message": f"Method not found: {mcp_request.get('method')}"
+            }
+        }
+        
+    except Exception as e:
+        print(f"MCP request error: {str(e)}")
+        return {
+            "jsonrpc": "2.0", 
+            "id": mcp_request.get("id") if 'mcp_request' in locals() else None,
+            "error": {
+                "code": -32603,
+                "message": f"Internal error: {str(e)}"
+            }
+        }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "oura-stress-resilience",
+        "timestamp": datetime.now().isoformat(),
+        "oauth_clients": len(oauth_clients),
+        "active_tokens": len(access_tokens)
+    }
+
+
 def main():
-    """Run the MCP server"""
+    """Run the OAuth-protected MCP server"""
+    import uvicorn
+    
     # Railway sets PORT dynamically
     port = int(os.environ.get("PORT", 8080))
     
     # Debug: Print environment info
-    print(f"Starting server with PORT={port}")
+    print(f"Starting OAuth-protected server with PORT={port}")
     print(f"OURA_API_TOKEN present: {'Yes' if os.environ.get('OURA_API_TOKEN') else 'No'}")
+    print(f"AUTH_SERVER_URL: {AUTH_SERVER_URL}")
+    print(f"TOOL_SERVER_URL: {TOOL_SERVER_URL}")
     
     if not OURA_API_TOKEN:
         print("Warning: OURA_API_TOKEN not set. The server will start but API calls will fail.")
         print("Please set your Oura API token in the environment or .env file.")
     
-    print(f"Starting Oura Stress & Resilience MCP server on port {port}")
+    print(f"Starting Oura Stress & Resilience OAuth + MCP server on port {port}")
     print(f"Server will listen on 0.0.0.0:{port}")
+    print("\nEndpoints:")
+    print(f"  OAuth metadata: https://your-domain.com/.well-known/oauth-authorization-server")
+    print(f"  Resource metadata: https://your-domain.com/.well-known/oauth-protected-resource")
+    print(f"  MCP endpoint: https://your-domain.com/mcp (requires Bearer token)")
+    print(f"  Health check: https://your-domain.com/health")
     
-    # Run the MCP server - bind to 0.0.0.0 for Railway
-    mcp.run(transport="streamable-http", port=port, host="0.0.0.0")
+    # Run FastAPI with uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":

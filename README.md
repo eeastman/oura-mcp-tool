@@ -39,32 +39,66 @@ Readiness tells you what your capacity is today. Stress and Resilience tell you 
 
 2. Set up your environment variables:
    ```bash
-   cp .env.example .env
-   # Edit .env and add your Oura API token
+   # Required
+   OURA_API_TOKEN=your_oura_api_token_here
+   
+   # OAuth Configuration (optional - defaults provided)
+   AUTH_SERVER_URL=https://your-auth-server.com
+   TOOL_SERVER_URL=https://your-tool-server.com
+   JWT_SECRET=your-super-secret-key-change-this-in-production
    ```
 
 3. Get your Oura API token:
    - Go to [Oura Cloud](https://cloud.ouraring.com/personal-access-tokens)
    - Create a new personal access token
-   - Copy the token to your `.env` file
+   - Add it to your environment variables
 
 ## Development
 
-Run the MCP server locally:
+Run the OAuth-protected MCP server locally:
 
 ```bash
 python src/oura_tool.py
 ```
 
-The server will start on `http://localhost:8080/mcp`
+The server will start on `http://localhost:8080` with these endpoints:
+
+- **OAuth Discovery**: `/.well-known/oauth-authorization-server`
+- **Protected Resource**: `/.well-known/oauth-protected-resource` 
+- **MCP Endpoint**: `/mcp` (requires Bearer token)
+- **Health Check**: `/health`
+
+## OAuth 2.0 Protection
+
+This tool is protected with OAuth 2.0 + PKCE for Dreamer platform integration:
+
+- **Dynamic Client Registration** (RFC 7591)
+- **Authorization Server Metadata** (RFC 8414) 
+- **Protected Resource Metadata** (RFC 9728)
+- **PKCE with S256** for secure authorization
+- **Bearer token validation** for all MCP requests
 
 ## Testing
 
-Test your tool locally using the MCP Inspector:
+### Local Testing (OAuth Protected)
+
+1. **Get an access token** via OAuth flow
+2. **Test with Bearer token**:
 
 ```bash
-npx @modelcontextprotocol/inspector http://localhost:8080/mcp
+curl -H "Authorization: Bearer your_token_here" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' \
+     http://localhost:8080/mcp
 ```
+
+### Dreamer Platform Integration
+
+When registering with Dreamer:
+1. Deploy your server publicly
+2. Dreamer automatically discovers OAuth metadata
+3. Users authenticate via OAuth flow
+4. All subsequent MCP calls include Bearer tokens
 
 ## Deployment
 

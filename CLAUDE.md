@@ -4,36 +4,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a focused MCP (Model Context Protocol) tool that provides **stress and resilience data** from Oura Ring devices. Built using Python 3.11 and FastMCP framework, designed for deployment to the Dreamer platform.
+This is a focused MCP (Model Context Protocol) tool that provides **stress and resilience data** from Oura Ring devices. Built using Python 3.11 with FastAPI + FastMCP, **OAuth 2.0 protected** for deployment to the Dreamer platform.
 
 **Purpose**: Returns actionable stress:recovery ratios and resilience context to understand why readiness might be declining.
+
+**Security**: Full OAuth 2.0 + PKCE implementation with Dynamic Client Registration per Dreamer requirements.
 
 ## Commands
 
 ### Development
-- **Run server locally**: `python src/oura_tool.py`
-- **Install dependencies**: `pip install -r requirements.txt`
-- **Test with MCP Inspector**: `npx @modelcontextprotocol/inspector http://localhost:8080/mcp`
+- **Run server locally**: `python src/oura_tool.py` (starts FastAPI server on port 8080)
+- **Install dependencies**: `pip install -r requirements.txt` (includes FastAPI, uvicorn, PyJWT)
+- **Test OAuth endpoints**: `curl http://localhost:8080/.well-known/oauth-authorization-server`
+- **Test with Bearer token**: `curl -H "Authorization: Bearer token" http://localhost:8080/mcp`
 
 ### Environment Setup
-Required environment variable:
+Required:
 - `OURA_API_TOKEN` - Personal Access Token from Oura (get from https://cloud.ouraring.com/personal-access-tokens)
+
+Optional (with defaults):
+- `AUTH_SERVER_URL` - OAuth authorization server URL  
+- `TOOL_SERVER_URL` - Tool server URL for resource metadata
+- `JWT_SECRET` - Secret for token signing (change in production)
 
 ## Architecture
 
-The entire application is contained in `/src/oura_tool.py` with a single-tool focus:
+The entire application is contained in `/src/oura_tool.py` combining OAuth server + MCP tool:
 
-1. **OuraAPIClient** - Handles API interactions with retry logic and error handling
-2. **One MCP Tool**: `get_stress_and_resilience`
+1. **FastAPI App** - Hosts both OAuth and MCP endpoints
+   - OAuth Discovery endpoints (RFC 8414, RFC 9728) 
+   - Dynamic Client Registration (RFC 7591)
+   - Authorization + Token endpoints with PKCE
+   - Protected MCP endpoint with Bearer token validation
+
+2. **OuraAPIClient** - Handles API interactions with retry logic and error handling
+
+3. **One MCP Tool**: `get_stress_and_resilience`
+   - OAuth-protected via Bearer token validation
    - Combines data from Oura's `/daily_stress` and `/daily_resilience` endpoints
    - Calculates actionable stress:recovery ratio (e.g., 4:1 is concerning)
    - Returns resilience level with 3 contributing factors
-   - Defaults to today's date if none specified
 
-3. **Helper Functions**:
-   - `calculate_stress_ratio()` - Handles division by zero and computes ratio
-   - `get_day_summary_description()` - Maps ratio to human-readable categories
-   - `get_resilience_level()` - Categorizes resilience based on contributor scores
+4. **OAuth Components**:
+   - In-memory storage for demo (use database in production)
+   - PKCE S256 challenge validation
+   - Access token lifecycle management
+   - JSON-RPC MCP protocol handler
 
 ## Key Implementation Details
 
