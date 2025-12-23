@@ -232,8 +232,13 @@ async def authorize_endpoint(
 @app.post("/oauth/token") 
 async def token_endpoint(request: Request):
     """OAuth 2.0 Token Endpoint"""
+    print(f"=== TOKEN ENDPOINT CALLED ===")
+    print(f"Headers: {dict(request.headers)}")
+    print(f"Method: {request.method}")
+    print(f"URL: {request.url}")
     try:
         form_data = await request.form()
+        print(f"Token endpoint form data: {dict(form_data)}")
         
         grant_type = form_data.get("grant_type")
         
