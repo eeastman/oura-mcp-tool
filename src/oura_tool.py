@@ -354,13 +354,33 @@ async def save_oura_token(request: Request):
 # Token validation
 async def validate_token(request: Request):
     """Validate Bearer token"""
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    auth_header = request.headers.get("Authorization", "")
+    print(f"Authorization header: {auth_header[:50]}..." if auth_header else "No auth header")
     
-    token = auth_header[7:]
+    if not auth_header:
+        raise HTTPException(
+            status_code=401, 
+            detail="Missing Authorization header",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authorization header format",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    token = auth_header[7:].strip()
+    print(f"Token to validate: {token}")
+    print(f"Available tokens: {list(access_tokens.keys())}")
+    
     if token not in access_tokens:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
     
     token_data = access_tokens[token]
     
@@ -368,7 +388,11 @@ async def validate_token(request: Request):
     expires_at = datetime.fromisoformat(token_data["expires_at"])
     if datetime.now() > expires_at:
         del access_tokens[token]
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(
+            status_code=401,
+            detail="Token expired",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
     
     return token_data
 
