@@ -603,13 +603,22 @@ async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str]
 # MCP endpoint info
 @app.get("/mcp")
 async def mcp_info():
-    """MCP endpoint information"""
+    """MCP endpoint - return tools list for GET requests"""
+    # Some MCP clients do GET first to check available tools
     return {
-        "service": "Oura Stress & Resilience MCP Server",
-        "version": "1.0.0",
-        "protocol": "MCP 2024-11-05",
-        "authentication": "OAuth 2.0 Bearer token required",
-        "methods": ["initialize", "tools/list", "tools/call"]
+        "tools": [{
+            "name": "get_stress_and_resilience",
+            "description": "Get stress and resilience data for a specific date",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "date_param": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format (defaults to today)"
+                    }
+                }
+            }
+        }]
     }
 
 # MCP OPTIONS for CORS

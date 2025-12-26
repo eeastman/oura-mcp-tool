@@ -385,13 +385,17 @@ async def test_error_scenarios():
         # Test unauthorized MCP access
         print("\n1️⃣ Testing MCP without authentication...")
         try:
-            result = await client.call_mcp_method("initialize")
-            print("  ❌ Should have failed!")
-        except Exception as e:
-            if "Unauthorized" in str(e) or "401" in str(e):
+            # Make direct request without auth header
+            response = await client.client.post(
+                f"{client.base_url}/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "initialize"}
+            )
+            if response.status_code == 401:
                 print("  ✅ Correctly rejected unauthorized request")
             else:
-                raise
+                print(f"  ❌ Should have returned 401, got {response.status_code}")
+        except Exception as e:
+            print(f"  ❌ Unexpected error: {e}")
         
         # Test with invalid token
         print("\n2️⃣ Testing MCP with invalid token...")
