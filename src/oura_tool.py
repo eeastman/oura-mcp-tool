@@ -118,6 +118,12 @@ async def resource_metadata():
         "bearer_methods_supported": ["header"]
     }
 
+# Handle trailing slash variant
+@app.get("/.well-known/oauth-protected-resource/")
+async def resource_metadata_slash():
+    """Protected Resource Metadata (with trailing slash)"""
+    return await resource_metadata()
+
 # OAuth Endpoints
 @app.post("/oauth/register")
 async def register_client(request: Request):
@@ -760,6 +766,12 @@ async def mcp_endpoint(request: Request):
             },
             headers={"Content-Type": "application/json"}
         )
+
+# MCP at root path for Dreamer compatibility
+@app.post("/")
+async def root_mcp_endpoint(request: Request):
+    """Handle MCP requests at root path (Dreamer uses this)"""
+    return await mcp_endpoint(request)
 
 # Health check
 @app.get("/health")
