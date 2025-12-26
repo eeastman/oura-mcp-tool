@@ -100,16 +100,39 @@ When registering with Dreamer:
 3. Users authenticate via OAuth flow
 4. All subsequent MCP calls include Bearer tokens
 
+## OAuth 2.0 Implementation
+
+This tool implements full OAuth 2.0 + PKCE compliance for Dreamer platform:
+
+### Features
+- ✅ **PKCE with S256** - RFC 7636 compliant
+- ✅ **Dynamic Client Registration** - RFC 7591
+- ✅ **Authorization Server Metadata** - RFC 8414
+- ✅ **Protected Resource Metadata** - RFC 9728
+- ✅ **Resource Indicators** - RFC 8707
+- ✅ **Refresh Tokens** - Automatic token renewal
+
+### Testing
+```bash
+# Run OAuth flow tests
+python tests/test_oauth_flow.py
+
+# Run full integration test
+export TEST_OURA_TOKEN="your-oura-token"
+python tests/test_full_integration.py
+```
+
 ## Deployment
 
-This tool can be deployed to any platform that supports Python web applications:
-- Railway
-- Render
-- Fly.io
-- AWS Lambda
-- Google Cloud Functions
+The recommended deployment platform is Railway:
 
-Make sure to set the `OURA_API_TOKEN` environment variable in your deployment platform.
+1. Connect your GitHub repository to Railway
+2. Set environment variables:
+   - `OURA_API_TOKEN` (optional - users provide their own)
+   - `JWT_SECRET` (for production security)
+3. Deploy - Railway auto-detects Python and uses `railway.json`
+
+See `DEPLOYMENT.md` for detailed instructions.
 
 ## Available Tool
 

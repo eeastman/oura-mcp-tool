@@ -54,3 +54,15 @@ htmlcov/
 
 # Logs
 *.log
+logs/
+server.log
+
+# Claude IDE
+.claude/
+
+# Local test scripts
+local_test_*.sh
+
+# Temporary files
+*.tmp
+.cache/
