@@ -95,14 +95,15 @@ async def oauth_metadata():
         "token_endpoint": f"{BASE_URL}/oauth/token",
         "registration_endpoint": f"{BASE_URL}/oauth/register",
         "code_challenge_methods_supported": ["S256"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "response_types_supported": ["code"],
         "token_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": ["oura:read"],
         "response_modes_supported": ["query"],
         "subject_types_supported": ["public"],
         "revocation_endpoint": f"{BASE_URL}/oauth/revoke",
-        "revocation_endpoint_auth_methods_supported": ["none"]
+        "revocation_endpoint_auth_methods_supported": ["none"],
+        "resource_indicators_supported": True  # RFC 8707
     }
     print(f"OAuth metadata requested, returning: {metadata}")
     return metadata
@@ -155,10 +156,17 @@ async def authorize(
     
     # Validate client
     if client_id not in clients:
-        raise HTTPException(status_code=400, detail="Invalid client_id")
+        # Return error per RFC 6749 4.1.2.1
+        error_params = urllib.parse.urlencode({
+            "error": "invalid_request",
+            "error_description": "The client identifier is invalid",
+            "state": state
+        })
+        return RedirectResponse(url=f"{redirect_uri}?{error_params}")
     
     client = clients[client_id]
     if redirect_uri not in client["redirect_uris"]:
+        # Don't redirect for redirect_uri mismatch per RFC 6749 4.1.2.4
         raise HTTPException(status_code=400, detail="Invalid redirect_uri")
     
     # Generate session for user auth flow
@@ -212,13 +220,17 @@ async def exchange_token(request: Request):
             code = form_data.get("code")
             client_id = form_data.get("client_id")
             code_verifier = form_data.get("code_verifier")
+            resource = form_data.get("resource")  # RFC 8707
             
             print(f"Exchanging code: {code} for client: {client_id}")
             
             # Find authorization session
             if code not in auth_codes:
                 print(f"Code not found. Available codes: {list(auth_codes.keys())}")
-                raise HTTPException(status_code=400, detail="Invalid authorization code")
+                return JSONResponse(
+                    content={"error": "invalid_grant", "error_description": "Authorization code is invalid"},
+                    status_code=400
+                )
             
             auth_data = auth_codes[code]
             
@@ -229,7 +241,10 @@ async def exchange_token(request: Request):
                 ).decode().rstrip('=')
                 
                 if expected_challenge != auth_data["code_challenge"]:
-                    raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
+                    return JSONResponse(
+                        content={"error": "invalid_grant", "error_description": "PKCE verification failed"},
+                        status_code=400
+                    )
             
             # Generate tokens
             access_token = str(uuid.uuid4())
@@ -240,6 +255,7 @@ async def exchange_token(request: Request):
                 "client_id": client_id,
                 "user_id": auth_data.get("user_id", "anonymous"),
                 "scope": auth_data.get("scope", ""),
+                "resource": resource or BASE_URL,  # RFC 8707
                 "created_at": datetime.now().isoformat(),
                 "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
                 "refresh_token": refresh_token
@@ -250,6 +266,7 @@ async def exchange_token(request: Request):
                 "client_id": client_id,
                 "user_id": auth_data.get("user_id", "anonymous"),
                 "scope": auth_data.get("scope", ""),
+                "resource": resource or BASE_URL,  # RFC 8707
                 "created_at": datetime.now().isoformat(),
                 "expires_at": (datetime.now() + timedelta(days=30)).isoformat(),
                 "is_refresh_token": True
@@ -268,6 +285,9 @@ async def exchange_token(request: Request):
                 "refresh_token": refresh_token,
                 "scope": auth_data.get("scope", "")
             }
+            # Include resource if specified (RFC 8707)
+            if resource:
+                response["resource"] = resource
             print(f"Token response: {response}")
             return response
         
@@ -275,23 +295,33 @@ async def exchange_token(request: Request):
             # Handle refresh token grant
             refresh_token = form_data.get("refresh_token")
             client_id = form_data.get("client_id")
+            resource = form_data.get("resource")  # RFC 8707
             
             print(f"Refresh token request: token={refresh_token}, client={client_id}")
             
             if not refresh_token or refresh_token not in access_tokens:
-                raise HTTPException(status_code=400, detail="Invalid refresh token")
+                return JSONResponse(
+                    content={"error": "invalid_grant", "error_description": "Refresh token is invalid"},
+                    status_code=400
+                )
             
             token_data = access_tokens[refresh_token]
             
             # Verify it's a refresh token
             if not token_data.get("is_refresh_token"):
-                raise HTTPException(status_code=400, detail="Invalid refresh token")
+                return JSONResponse(
+                    content={"error": "invalid_grant", "error_description": "Token is not a refresh token"},
+                    status_code=400
+                )
             
             # Check expiration
             expires_at = datetime.fromisoformat(token_data["expires_at"])
             if datetime.now() > expires_at:
                 del access_tokens[refresh_token]
-                raise HTTPException(status_code=400, detail="Refresh token expired")
+                return JSONResponse(
+                    content={"error": "invalid_grant", "error_description": "Refresh token has expired"},
+                    status_code=400
+                )
             
             # Generate new access token
             new_access_token = str(uuid.uuid4())
@@ -301,6 +331,7 @@ async def exchange_token(request: Request):
                 "client_id": client_id or token_data["client_id"],
                 "user_id": token_data["user_id"],
                 "scope": token_data["scope"],
+                "resource": resource or token_data.get("resource", BASE_URL),  # RFC 8707
                 "created_at": datetime.now().isoformat(),
                 "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
                 "refresh_token": refresh_token
@@ -313,12 +344,18 @@ async def exchange_token(request: Request):
                 "refresh_token": refresh_token,
                 "scope": token_data["scope"]
             }
+            # Include resource if specified (RFC 8707)
+            if resource or token_data.get("resource"):
+                response["resource"] = resource or token_data["resource"]
             
             print(f"Refresh token response: {response}")
             return response
         
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported grant type: {grant_type}")
+            return JSONResponse(
+                content={"error": "unsupported_grant_type", "error_description": f"Grant type '{grant_type}' is not supported"},
+                status_code=400
+            )
         
     except HTTPException:
         raise
