@@ -43,13 +43,14 @@ OURA_CLIENT_SECRET = os.getenv('OURA_CLIENT_SECRET')
 # Initialize FastAPI app
 app = FastAPI(title="Oura Stress & Resilience Tool")
 
-# Simple CORS setup
+# CORS setup per Dreamer requirements
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Mcp-Session-Id"],
 )
 
 # Simple in-memory storage
@@ -70,7 +71,7 @@ class OuraAPIClient:
         url = f"{OURA_API_BASE_URL}/{endpoint}"
         
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:  # 30 second timeout per Dreamer docs
                 response = await client.get(url, headers=self.headers, params=params or {})
                 
                 if response.status_code == 401:
@@ -592,7 +593,8 @@ async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str]
                     "ratio": ratio if ratio != float('inf') else None
                 },
                 "resilience": resilience_result
-            }
+            },
+            "isError": False
         }
         
     except ValueError:
@@ -623,6 +625,25 @@ async def mcp_info():
                         "description": "Date in YYYY-MM-DD format (defaults to today)"
                     }
                 }
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string", "enum": ["text"]},
+                                "text": {"type": "string"}
+                            },
+                            "required": ["type", "text"]
+                        }
+                    },
+                    "structuredContent": {"type": "object"},
+                    "isError": {"type": "boolean"}
+                },
+                "required": ["content"]
             }
         }]
     }
@@ -636,7 +657,8 @@ async def mcp_options():
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Mcp-Session-Id",
+            "Access-Control-Expose-Headers": "Mcp-Session-Id",
             "Access-Control-Max-Age": "86400"
         }
     )
@@ -720,6 +742,25 @@ async def mcp_endpoint(request: Request):
                                     "description": "Date in YYYY-MM-DD format (defaults to today)"
                                 }
                             }
+                        },
+                        "outputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {"type": "string", "enum": ["text"]},
+                                            "text": {"type": "string"}
+                                        },
+                                        "required": ["type", "text"]
+                                    }
+                                },
+                                "structuredContent": {"type": "object"},
+                                "isError": {"type": "boolean"}
+                            },
+                            "required": ["content"]
                         }
                     }]
                 }
