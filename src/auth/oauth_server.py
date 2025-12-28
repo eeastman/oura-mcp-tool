@@ -434,6 +434,46 @@ def setup_oauth_routes(app: FastAPI):
             "error": error
         }
 
+    # Development-only test token endpoint
+    if os.getenv("ENABLE_TEST_ENDPOINTS") == "true":
+        @app.post("/oauth/test-token")
+        async def create_test_token(request: Request):
+            """Create a test token for development - DO NOT USE IN PRODUCTION"""
+            try:
+                data = await request.json()
+                oura_token = data.get("oura_token")
+
+                if not oura_token:
+                    raise HTTPException(status_code=400, detail="oura_token required")
+
+                # Create test user
+                user_id = str(uuid.uuid4())
+                user_tokens[user_id] = {
+                    "oura_token": oura_token,
+                    "created_at": datetime.now().isoformat()
+                }
+
+                # Create access token
+                access_token = str(uuid.uuid4())
+                access_tokens[access_token] = {
+                    "client_id": "test-client",
+                    "user_id": user_id,
+                    "scope": "oura:read",
+                    "resource": BASE_URL,
+                    "created_at": datetime.now().isoformat(),
+                    "expires_at": (datetime.now() + timedelta(hours=24)).isoformat()
+                }
+
+                return {
+                    "access_token": access_token,
+                    "token_type": "Bearer",
+                    "expires_in": 86400,
+                    "instructions": f"Use this header: Authorization: Bearer {access_token}"
+                }
+
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
 # Token validation function
 async def validate_token(request: Request):
     """Validate Bearer token"""

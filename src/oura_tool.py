@@ -126,18 +126,13 @@ async def mcp_endpoint(request: Request):
     print("=== MCP ENDPOINT CALLED ===")
     print(f"Headers: {dict(request.headers)}")
     
-    # TEMPORARY: Auth disabled for MCP Inspector testing
-    print("⚠️  WARNING: Auth disabled for testing - DO NOT USE IN PRODUCTION!")
-    token_data = {
-        'user_id': 'test-user',
-        'client_id': 'mcp-inspector'
-    }
-    # Create test user token with actual Oura token
-    if 'test-user' not in user_tokens:
-        user_tokens['test-user'] = {
-            'oura_token': os.getenv('OURA_API_TOKEN', ''),
-            'created_at': datetime.now().isoformat()
-        }
+    # Validate OAuth token
+    try:
+        token_data = await validate_token(request)
+        print(f"Token validated for user: {token_data.get('user_id')}")
+    except HTTPException as e:
+        print(f"Token validation failed: {e.detail}")
+        raise
     
     try:
         # Parse MCP request
