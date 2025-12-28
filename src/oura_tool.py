@@ -2,7 +2,6 @@
 Oura Stress and Resilience MCP Tool
 """
 
-import httpx
 import os
 import sys
 from datetime import datetime, date, timedelta
@@ -14,19 +13,20 @@ from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.middleware.cors import CORSMiddleware
 import json
 
-# Import our auth module
+# Import our modules
 try:
     # Try absolute import first (for when running as python main.py)
     from src.auth.oauth_server import setup_oauth_routes, validate_token, user_tokens
+    from src.tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
 except ImportError:
     # Fall back to relative import (for when running as python src/oura_tool.py)
     from auth.oauth_server import setup_oauth_routes, validate_token, user_tokens
+    from tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
 
 # Load environment variables
 load_dotenv()
 
 # Configuration
-OURA_API_BASE_URL = "https://api.ouraring.com/v2/usercollection"
 
 # Server configuration
 PORT = int(os.environ.get("PORT", 8080))
@@ -47,33 +47,6 @@ app.add_middleware(
 # Setup OAuth routes from our auth module
 setup_oauth_routes(app)
 
-class OuraAPIClient:
-    """Client for Oura API"""
-    
-    def __init__(self, api_token: str):
-        self.api_token = api_token
-        self.headers = {"Authorization": f"Bearer {api_token}"}
-    
-    async def fetch_data(self, endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Fetch data from Oura API"""
-        url = f"{OURA_API_BASE_URL}/{endpoint}"
-        
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:  # 30 second timeout per Dreamer docs
-                response = await client.get(url, headers=self.headers, params=params or {})
-                
-                if response.status_code == 401:
-                    return {"error": "Invalid Oura token", "isError": True}
-                
-                if response.status_code == 429:
-                    return {"error": "Rate limited", "isError": True}
-                
-                response.raise_for_status()
-                return response.json()
-                
-        except Exception as e:
-            return {"error": f"API error: {str(e)}", "isError": True}
-
 # MCP Tool Implementation
 
 async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str] = None) -> dict:
@@ -87,108 +60,9 @@ async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str]
         }
     
     oura_token = user_tokens[user_id]["oura_token"]
-    client = OuraAPIClient(oura_token)
     
-    # Use provided date or today
-    target_date = date_param or date.today().strftime("%Y-%m-%d")
-    
-    try:
-        # Validate date
-        datetime.strptime(target_date, "%Y-%m-%d")
-        
-        # Fetch data
-        params = {"start_date": target_date, "end_date": target_date}
-        stress_data = await client.fetch_data("daily_stress", params)
-        resilience_data = await client.fetch_data("daily_resilience", params)
-        
-        # Check for errors
-        if stress_data.get("isError"):
-            return {
-                "content": [{"type": "text", "text": f"Error: {stress_data['error']}"}],
-                "isError": True
-            }
-        
-        if resilience_data.get("isError"):
-            return {
-                "content": [{"type": "text", "text": f"Error: {resilience_data['error']}"}],
-                "isError": True
-            }
-        
-        # Process data
-        stress_records = stress_data.get("data", [])
-        resilience_records = resilience_data.get("data", [])
-        
-        
-        stress_record = next((r for r in stress_records if r.get("day") == target_date), None)
-        resilience_record = next((r for r in resilience_records if r.get("day") == target_date), None)
-        
-        if not stress_record:
-            return {
-                "content": [{"type": "text", "text": f"No data found for {target_date}"}],
-                "isError": True
-            }
-        
-        # Calculate stress metrics
-        high_stress = stress_record.get("stress_high", 0)
-        recovery = stress_record.get("recovery_high", 0)
-        ratio = high_stress / recovery if recovery > 0 else float('inf')
-        
-        # Process resilience
-        resilience_result = None
-        if resilience_record:
-            contributors = resilience_record.get("contributors", {})
-            resilience_result = {
-                "level": resilience_record.get("level", "unknown"),  # Use Oura's level directly
-                "contributors": {
-                    "sleepRecovery": contributors.get("sleep_recovery", 0),
-                    "daytimeRecovery": contributors.get("daytime_recovery", 0),
-                    "stress": contributors.get("stress", 0)
-                }
-            }
-        
-        # Format response
-        def format_duration(seconds):
-            hours = seconds // 3600
-            minutes = (seconds % 3600) // 60
-            if hours > 0 and minutes > 0:
-                return f"{hours}h {minutes}m"
-            elif hours > 0:
-                return f"{hours}h"
-            elif minutes > 0:
-                return f"{minutes}m"
-            else:
-                return "0m"
-        
-        stress_formatted = format_duration(high_stress)
-        recovery_formatted = format_duration(recovery)
-        summary = f"Stress: {stress_formatted}, Recovery: {recovery_formatted}"
-        if ratio != float('inf'):
-            summary += f" (ratio: {ratio:.1f}:1)"
-        
-        return {
-            "content": [{"type": "text", "text": summary}],
-            "structuredContent": {
-                "date": target_date,
-                "stress": {
-                    "highStressSeconds": high_stress,
-                    "recoverySeconds": recovery,
-                    "ratio": ratio if ratio != float('inf') else None
-                },
-                "resilience": resilience_result
-            },
-            "isError": False
-        }
-        
-    except ValueError:
-        return {
-            "content": [{"type": "text", "text": "Invalid date format. Use YYYY-MM-DD"}],
-            "isError": True
-        }
-    except Exception as e:
-        return {
-            "content": [{"type": "text", "text": f"Error: {str(e)}"}],
-            "isError": True
-        }
+    # Call the imported function
+    return await get_stress_resilience(oura_token, date_param)
 
 # MCP endpoint info
 @app.get("/mcp")
