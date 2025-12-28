@@ -66,3 +66,9 @@ local_test_*.sh
 # Temporary files
 *.tmp
 .cache/
+
+# Database files
+data/
+*.db
+*.sqlite
+*.sqlite3

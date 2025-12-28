@@ -14,10 +14,11 @@ This is a focused MCP (Model Context Protocol) tool that provides **stress and r
 
 ### Development
 - **Run server locally**: `python main.py` or `python src/oura_tool.py` (starts FastAPI server on port 8080)
-- **Install dependencies**: `pip install -r requirements.txt` (includes FastAPI, uvicorn, PyJWT, httpx)
+- **Install dependencies**: `pip install -r requirements.txt` (includes FastAPI, uvicorn, PyJWT, httpx, aiosqlite)
 - **Test OAuth endpoints**: `curl http://localhost:8080/.well-known/oauth-authorization-server`
 - **Test with Bearer token**: `curl -H "Authorization: Bearer token" http://localhost:8080/mcp`
 - **Test with MCP Inspector**: `npx @modelcontextprotocol/inspector http://localhost:8080/mcp`
+- **Test persistence**: `python test_persistence.py` (tests token persistence across restarts)
 
 ### Environment Setup
 Required:
@@ -27,6 +28,8 @@ Optional (with defaults):
 - `AUTH_SERVER_URL` - OAuth authorization server URL  
 - `TOOL_SERVER_URL` - Tool server URL for resource metadata
 - `JWT_SECRET` - Secret for token signing (change in production)
+- `STORAGE_TYPE` - Storage backend: "sqlite" (default) or "memory" (for testing)
+- `SQLITE_DB_PATH` - Path to SQLite database (default: "data/tokens.db")
 
 ## Architecture
 
@@ -38,10 +41,13 @@ oura_tool/
 ├── src/
 │   ├── oura_tool.py            # Main FastAPI app and MCP endpoints
 │   ├── auth/
-│   │   └── oauth_server.py     # OAuth 2.0 implementation (all auth logic)
+│   │   ├── oauth_server.py     # OAuth 2.0 implementation with persistent storage
+│   │   ├── storage.py          # Storage interface and implementations
+│   │   └── storage_wrapper.py  # Dictionary-like wrapper for storage
 │   └── tools/
 │       ├── oura_client.py      # Oura API client (reusable)
 │       └── stress_resilience.py # Stress & resilience tool logic
+├── data/                        # SQLite database directory (gitignored)
 ```
 
 ### Key Components:
@@ -51,7 +57,8 @@ oura_tool/
    - Dynamic Client Registration (RFC 7591)
    - Authorization + Token endpoints with PKCE
    - Token validation logic
-   - ~483 lines of reusable OAuth code
+   - Persistent storage using SQLite (via storage abstraction)
+   - Automatic cleanup of expired tokens (runs hourly)
 
 2. **Oura API Client** (`src/tools/oura_client.py`)
    - Handles all Oura API interactions
@@ -79,6 +86,13 @@ oura_tool/
 - Handles edge cases (no recovery time, missing data, API errors)
 - Time formatting shows hours and minutes (e.g., "4h 23m high stress")
 - Uses Oura's resilience level directly (e.g., "solid", "limited") instead of calculating
+
+### Persistent Storage
+- Tokens and OAuth data stored in SQLite database (data/tokens.db)
+- Survives server restarts - no loss of authentication state
+- Automatic cleanup of expired tokens runs hourly
+- Storage abstraction allows future migration to Redis if needed
+- In-memory storage option available for testing
 
 ## Response Format
 Returns MCP-formatted response with both human-readable and structured data:

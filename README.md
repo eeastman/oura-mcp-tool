@@ -46,6 +46,10 @@ Readiness tells you what your capacity is today. Stress and Resilience tell you 
    AUTH_SERVER_URL=https://your-auth-server.com
    TOOL_SERVER_URL=https://your-tool-server.com
    JWT_SECRET=your-super-secret-key-change-this-in-production
+
+   # Storage Configuration (optional - defaults provided)
+   STORAGE_TYPE=sqlite  # Options: sqlite (default), memory
+   SQLITE_DB_PATH=data/tokens.db  # Default path for SQLite database
    ```
 
 3. Get your Oura API token:
@@ -77,6 +81,8 @@ This tool is protected with OAuth 2.0 + PKCE for Dreamer platform integration:
 - **Protected Resource Metadata** (RFC 9728)
 - **PKCE with S256** for secure authorization
 - **Bearer token validation** for all MCP requests
+- **Persistent token storage** using SQLite (survives server restarts)
+- **Automatic cleanup** of expired tokens
 
 ## Testing
 
@@ -131,6 +137,8 @@ The recommended deployment platform is Railway:
    - `OURA_API_TOKEN` (optional - users provide their own)
    - `JWT_SECRET` (for production security)
 3. Deploy - Railway auto-detects Python and uses `railway.json`
+
+The SQLite database will be automatically created at `data/tokens.db` on first run. For production deployments with multiple instances, consider using Redis instead by setting `STORAGE_TYPE=redis`.
 
 See `DEPLOYMENT.md` for detailed instructions.
 

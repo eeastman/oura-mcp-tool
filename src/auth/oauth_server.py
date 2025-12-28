@@ -1,5 +1,5 @@
 """
-OAuth 2.0 Server Implementation for MCP Tools
+OAuth 2.0 Server Implementation with Persistent Storage
 """
 
 from fastapi import FastAPI, HTTPException, Request
@@ -10,12 +10,11 @@ import urllib.parse
 import hashlib
 import base64
 import os
+import asyncio
+from .storage_wrapper import get_storage_manager, OAuthStorageManager
 
-# In-memory storage (replace with database in production)
-clients = {}
-auth_codes = {}
-access_tokens = {}
-user_tokens = {}
+# Get storage manager instance
+storage: OAuthStorageManager = get_storage_manager()
 
 def get_base_url():
     """Get the base URL for OAuth endpoints"""
@@ -79,17 +78,19 @@ def setup_oauth_routes(app: FastAPI):
             data = await request.json()
             client_id = str(uuid.uuid4())
             
-            clients[client_id] = {
+            client_data = {
                 "client_id": client_id,
                 "redirect_uris": data.get("redirect_uris", []),
                 "client_name": data.get("client_name", "Unknown"),
                 "created_at": datetime.now().isoformat()
             }
             
+            await storage.clients.set(client_id, client_data)
+            
             return {
                 "client_id": client_id,
-                "client_name": clients[client_id]["client_name"],
-                "redirect_uris": clients[client_id]["redirect_uris"]
+                "client_name": client_data["client_name"],
+                "redirect_uris": client_data["redirect_uris"]
             }
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Registration failed: {str(e)}")
@@ -108,7 +109,8 @@ def setup_oauth_routes(app: FastAPI):
         print(f"Authorization request: client_id={client_id}, redirect_uri={redirect_uri}")
         
         # Validate client
-        if client_id not in clients:
+        client = await storage.clients.get(client_id)
+        if not client:
             # Return error per RFC 6749 4.1.2.1
             error_params = urllib.parse.urlencode({
                 "error": "invalid_request",
@@ -117,7 +119,6 @@ def setup_oauth_routes(app: FastAPI):
             })
             return RedirectResponse(url=f"{redirect_uri}?{error_params}")
         
-        client = clients[client_id]
         if redirect_uri not in client["redirect_uris"]:
             # Don't redirect for redirect_uri mismatch per RFC 6749 4.1.2.4
             raise HTTPException(status_code=400, detail="Invalid redirect_uri")
@@ -139,7 +140,7 @@ def setup_oauth_routes(app: FastAPI):
             "expires_at": (datetime.now() + timedelta(minutes=10)).isoformat()
         }
         
-        auth_codes[session_id] = auth_request
+        await storage.auth_codes.set(session_id, auth_request)
         
         # Redirect to Oura connection page
         return RedirectResponse(url=f"{BASE_URL}/connect?session={session_id}")
@@ -155,7 +156,6 @@ def setup_oauth_routes(app: FastAPI):
         print("=== TOKEN EXCHANGE CALLED ===")
         print(f"Request method: {request.method}")
         print(f"Request headers: {dict(request.headers)}")
-        print(f"Available auth codes: {list(auth_codes.keys())}")
         
         try:
             # Handle both form data and JSON requests
@@ -178,14 +178,12 @@ def setup_oauth_routes(app: FastAPI):
                 print(f"Exchanging code: {code} for client: {client_id}")
                 
                 # Find authorization session
-                if code not in auth_codes:
-                    print(f"Code not found. Available codes: {list(auth_codes.keys())}")
+                auth_data = await storage.auth_codes.get(code)
+                if not auth_data:
                     return JSONResponse(
                         content={"error": "invalid_grant", "error_description": "Authorization code is invalid"},
                         status_code=400
                     )
-                
-                auth_data = auth_codes[code]
                 
                 # Validate PKCE if present
                 if auth_data.get("code_challenge") and code_verifier:
@@ -204,7 +202,7 @@ def setup_oauth_routes(app: FastAPI):
                 refresh_token = str(uuid.uuid4())
                 
                 # Store access token
-                access_tokens[access_token] = {
+                access_token_data = {
                     "client_id": client_id,
                     "user_id": auth_data.get("user_id", "anonymous"),
                     "scope": auth_data.get("scope", ""),
@@ -213,9 +211,10 @@ def setup_oauth_routes(app: FastAPI):
                     "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
                     "refresh_token": refresh_token
                 }
+                await storage.create_access_token(access_token, access_token_data)
                 
                 # Store refresh token (longer expiry)
-                access_tokens[refresh_token] = {
+                refresh_token_data = {
                     "client_id": client_id,
                     "user_id": auth_data.get("user_id", "anonymous"),
                     "scope": auth_data.get("scope", ""),
@@ -224,9 +223,10 @@ def setup_oauth_routes(app: FastAPI):
                     "expires_at": (datetime.now() + timedelta(days=30)).isoformat(),
                     "is_refresh_token": True
                 }
+                await storage.create_refresh_token(refresh_token, refresh_token_data)
                 
                 # Clean up authorization code
-                del auth_codes[code]
+                await storage.auth_codes.delete(code)
                 
                 print(f"Generated access token: {access_token}")
                 print(f"Generated refresh token: {refresh_token}")
@@ -252,13 +252,12 @@ def setup_oauth_routes(app: FastAPI):
                 
                 print(f"Refresh token request: token={refresh_token}, client={client_id}")
                 
-                if not refresh_token or refresh_token not in access_tokens:
+                token_data = await storage.access_tokens.get(refresh_token)
+                if not token_data:
                     return JSONResponse(
                         content={"error": "invalid_grant", "error_description": "Refresh token is invalid"},
                         status_code=400
                     )
-                
-                token_data = access_tokens[refresh_token]
                 
                 # Verify it's a refresh token
                 if not token_data.get("is_refresh_token"):
@@ -270,7 +269,7 @@ def setup_oauth_routes(app: FastAPI):
                 # Check expiration
                 expires_at = datetime.fromisoformat(token_data["expires_at"])
                 if datetime.now() > expires_at:
-                    del access_tokens[refresh_token]
+                    await storage.access_tokens.delete(refresh_token)
                     return JSONResponse(
                         content={"error": "invalid_grant", "error_description": "Refresh token has expired"},
                         status_code=400
@@ -280,7 +279,7 @@ def setup_oauth_routes(app: FastAPI):
                 new_access_token = str(uuid.uuid4())
                 
                 # Store new access token
-                access_tokens[new_access_token] = {
+                new_token_data = {
                     "client_id": client_id or token_data["client_id"],
                     "user_id": token_data["user_id"],
                     "scope": token_data["scope"],
@@ -289,6 +288,7 @@ def setup_oauth_routes(app: FastAPI):
                     "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
                     "refresh_token": refresh_token
                 }
+                await storage.create_access_token(new_access_token, new_token_data)
                 
                 response = {
                     "access_token": new_access_token,
@@ -320,10 +320,10 @@ def setup_oauth_routes(app: FastAPI):
     @app.get("/connect")
     async def connect_oura(session: str):
         """Show Oura connection page"""
-        if session not in auth_codes:
+        auth_data = await storage.auth_codes.get(session)
+        if not auth_data:
             raise HTTPException(status_code=400, detail="Invalid session")
         
-        auth_data = auth_codes[session]
         if auth_data["status"] != "pending":
             raise HTTPException(status_code=400, detail="Session already used")
         
@@ -373,17 +373,16 @@ def setup_oauth_routes(app: FastAPI):
         session_id = form_data.get("session_id")
         oura_token = form_data.get("oura_token")
         
-        if session_id not in auth_codes:
+        auth_data = await storage.auth_codes.get(session_id)
+        if not auth_data:
             raise HTTPException(status_code=400, detail="Invalid session")
-        
-        auth_data = auth_codes[session_id]
         
         # Store user's Oura token
         user_id = str(uuid.uuid4())
-        user_tokens[user_id] = {
+        await storage.user_tokens.set(user_id, {
             "oura_token": oura_token,
             "created_at": datetime.now().isoformat()
-        }
+        })
         
         # Update auth data
         auth_data["user_id"] = user_id
@@ -391,8 +390,8 @@ def setup_oauth_routes(app: FastAPI):
         
         # Generate final authorization code
         final_code = str(uuid.uuid4())
-        auth_codes[final_code] = auth_data
-        del auth_codes[session_id]
+        await storage.auth_codes.set(final_code, auth_data)
+        await storage.auth_codes.delete(session_id)
         
         # Redirect back to Dreamer
         redirect_url = f"{auth_data['redirect_uri']}?code={final_code}"
@@ -402,7 +401,6 @@ def setup_oauth_routes(app: FastAPI):
         print(f"=== AUTHORIZATION COMPLETE ===")
         print(f"Generated auth code: {final_code}")
         print(f"Redirecting to: {redirect_url}")
-        print(f"Auth codes in storage: {list(auth_codes.keys())}")
         
         # Use 302 redirect for better compatibility
         return RedirectResponse(url=redirect_url, status_code=302)
@@ -416,8 +414,8 @@ def setup_oauth_routes(app: FastAPI):
         print(f"Token revocation requested for: {token}")
         
         # Remove token if it exists
-        if token and token in access_tokens:
-            del access_tokens[token]
+        if token:
+            await storage.access_tokens.delete(token)
         
         # Always return 200 OK per RFC 7009
         return {"revoked": True}
@@ -448,14 +446,14 @@ def setup_oauth_routes(app: FastAPI):
 
                 # Create test user
                 user_id = str(uuid.uuid4())
-                user_tokens[user_id] = {
+                await storage.user_tokens.set(user_id, {
                     "oura_token": oura_token,
                     "created_at": datetime.now().isoformat()
-                }
+                })
 
                 # Create access token
                 access_token = str(uuid.uuid4())
-                access_tokens[access_token] = {
+                token_data = {
                     "client_id": "test-client",
                     "user_id": user_id,
                     "scope": "oura:read",
@@ -463,6 +461,7 @@ def setup_oauth_routes(app: FastAPI):
                     "created_at": datetime.now().isoformat(),
                     "expires_at": (datetime.now() + timedelta(hours=24)).isoformat()
                 }
+                await storage.create_access_token(access_token, token_data, 86400)
 
                 return {
                     "access_token": access_token,
@@ -473,6 +472,22 @@ def setup_oauth_routes(app: FastAPI):
 
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
+    
+    # Start background task for cleanup
+    @app.on_event("startup")
+    async def startup_event():
+        """Start background cleanup task"""
+        async def cleanup_task():
+            while True:
+                try:
+                    count = await storage.cleanup_expired()
+                    if count > 0:
+                        print(f"Cleaned up {count} expired tokens")
+                except Exception as e:
+                    print(f"Cleanup error: {e}")
+                await asyncio.sleep(3600)  # Run every hour
+        
+        asyncio.create_task(cleanup_task())
 
 # Token validation function
 async def validate_token(request: Request):
@@ -496,28 +511,16 @@ async def validate_token(request: Request):
     
     token = auth_header[7:].strip()
     print(f"Token to validate: {token}")
-    print(f"Available tokens: {list(access_tokens.keys())}")
     
-    if token not in access_tokens:
+    token_data = await storage.validate_token(token)
+    if not token_data:
         raise HTTPException(
             status_code=401,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
-    
-    token_data = access_tokens[token]
-    
-    # Check expiration
-    expires_at = datetime.fromisoformat(token_data["expires_at"])
-    if datetime.now() > expires_at:
-        del access_tokens[token]
-        raise HTTPException(
-            status_code=401,
-            detail="Token expired",
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"}
         )
     
     return token_data
 
-# Export for use in main app
-__all__ = ['setup_oauth_routes', 'validate_token', 'user_tokens', 'clients', 'access_tokens']
+# Export for use in main app - now we need to export the storage manager too
+__all__ = ['setup_oauth_routes', 'validate_token', 'storage']

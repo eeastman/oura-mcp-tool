@@ -16,11 +16,11 @@ import json
 # Import our modules
 try:
     # Try absolute import first (for when running as python main.py)
-    from src.auth.oauth_server import setup_oauth_routes, validate_token, user_tokens
+    from src.auth.oauth_server import setup_oauth_routes, validate_token, storage
     from src.tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
 except ImportError:
     # Fall back to relative import (for when running as python src/oura_tool.py)
-    from auth.oauth_server import setup_oauth_routes, validate_token, user_tokens
+    from auth.oauth_server import setup_oauth_routes, validate_token, storage
     from tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
 
 # Load environment variables
@@ -52,14 +52,15 @@ setup_oauth_routes(app)
 async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str] = None) -> dict:
     """Get stress and resilience data for user"""
     
-    # Get user's Oura token
-    if user_id not in user_tokens:
+    # Get user's Oura token from storage
+    user_data = await storage.user_tokens.get(user_id)
+    if not user_data:
         return {
             "content": [{"type": "text", "text": "User not found"}],
             "isError": True
         }
     
-    oura_token = user_tokens[user_id]["oura_token"]
+    oura_token = user_data["oura_token"]
     
     # Call the imported function
     return await get_stress_resilience(oura_token, date_param)
@@ -275,13 +276,13 @@ async def root_mcp_endpoint(request: Request):
 @app.get("/health")
 async def health():
     """Health check"""
-    # Import from auth module to get current counts
-    from src.auth.oauth_server import clients, access_tokens
+    # Since storage is async, we can't easily count items
+    # Just return basic health status
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "clients": len(clients),
-        "tokens": len(access_tokens)
+        "storage": "persistent",
+        "storage_type": os.getenv('STORAGE_TYPE', 'sqlite')
     }
 
 
