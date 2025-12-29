@@ -1,68 +1,80 @@
-# Production Improvements TODO
+# Production TODO
 
-## ✅ Completed Cleanup
-- Organized directory structure (src/, tests/, scripts/)
-- Removed unnecessary deployment files (Docker, Fly.io, Heroku)
-- Updated .gitignore for production
-- Consolidated documentation
-- No sensitive data in codebase
+## ✅ Completed
+- [x] Organized directory structure (src/, tests/, scripts/)
+- [x] Removed unnecessary deployment files (Docker, Fly.io, Heroku)
+- [x] Updated .gitignore for production
+- [x] Consolidated documentation
+- [x] No sensitive data in codebase
+- [x] Split oura_tool.py into modules
+- [x] Add comprehensive type hints
+- [x] Add docstrings to all functions
+- [x] Add retry logic for Oura API calls
+- [x] Better error messages for users
+- [x] Implement persistent token storage (SQLite)
+- [x] Document all environment variables
+- [x] Follow Dreamer schema patterns (outputSchema)
 
-## 🔧 Code Quality Improvements Needed
+## 🚨 Critical for Production (High Priority)
 
-### 1. Security Hardening (High Priority)
-- [ ] Remove hardcoded JWT_SECRET default
-- [ ] Add environment variable validation on startup
-- [ ] Implement rate limiting (e.g., 100 requests/minute per IP)
-- [ ] Add request size limits (e.g., 1MB max)
-- [ ] Use cryptographically secure random for tokens
-- [ ] Add CORS configuration for production domains only
+### Security
+- [ ] Remove hardcoded JWT_SECRET default - use env var only
+- [ ] Use secrets.token_urlsafe() instead of uuid4 for tokens
+- [ ] Add request size limits (1MB max)
+- [ ] Validate CORS domains for production (not '*')
 
-### 2. Code Organization (Medium Priority)
-- [ ] Split oura_tool.py into modules:
-  - `oauth_server.py` - OAuth endpoints
-  - `mcp_server.py` - MCP endpoints  
-  - `models.py` - Pydantic models
-  - `auth.py` - Authentication logic
-  - `oura_client.py` - Oura API client
-- [ ] Add comprehensive type hints
-- [ ] Add docstrings to all functions
-- [ ] Create configuration module for settings
+### Reliability  
+- [ ] Add exponential backoff to retry logic (currently flat retry)
+- [ ] Implement comprehensive health check endpoint
+- [ ] Add proper logging with context (replace print statements)
+- [ ] Handle partial failures gracefully
+- [ ] Implement graceful degradation with fallbacks
+- [ ] Add resource cleanup in finally blocks
 
-### 3. Error Handling (Medium Priority)
-- [ ] Create custom exception classes
-- [ ] Implement structured error responses
-- [ ] Add retry logic for Oura API calls
-- [ ] Better error messages for users
+## 📈 Performance & Operations (Medium Priority)
 
-### 4. Testing (High Priority)
+### Performance
+- [ ] Implement caching for Oura API responses (5 min TTL)
+- [ ] Add connection pooling for HTTP client
+- [ ] Implement rate limiting (100 req/min per IP)
+- [ ] Limit result sizes (prevent huge responses)
+- [ ] Add periodic cache cleanup
+
+### Monitoring
+- [ ] Use Python logging module with structured output
+- [ ] Add request ID tracking
+- [ ] Never log sensitive data (tokens, etc.)
+- [ ] Add metrics endpoint for monitoring
+
+## 🧪 Testing & Documentation (Lower Priority)
+
+### Testing
 - [ ] Add unit tests for OAuth flows
 - [ ] Add unit tests for MCP handlers
 - [ ] Mock Oura API responses
-- [ ] Add GitHub Actions CI/CD
-- [ ] Code coverage > 80%
+- [ ] Add integration tests
+- [ ] Set up GitHub Actions CI/CD
+- [ ] Test error paths (timeouts, invalid inputs, API failures)
+- [ ] Test with MCP Inspector before each deployment
 
-### 5. Monitoring & Logging (Low Priority)
-- [ ] Replace print() with proper logging
-- [ ] Add structured logging (JSON format)
-- [ ] Never log sensitive data (tokens, etc.)
-- [ ] Add metrics endpoint
-- [ ] Add request ID tracking
-
-### 6. Performance (Low Priority)
-- [ ] Use connection pooling for HTTP client
-- [ ] Add caching for Oura API responses (5 min TTL)
-- [ ] Optimize token storage (consider Redis)
-- [ ] Add database for production token storage
-
-### 7. Documentation
-- [ ] Add API documentation (OpenAPI/Swagger)
-- [ ] Document all environment variables
-- [ ] Add architecture diagram
-- [ ] Create contribution guidelines
+### Documentation
+- [ ] Add OpenAPI/Swagger documentation
+- [ ] Create architecture diagram
+- [ ] Add contribution guidelines
 
 ## Next Steps
 
-1. Start with security hardening (most critical)
-2. Add comprehensive tests
-3. Refactor into modules for maintainability
-4. Deploy with monitoring
+1. **Immediate** (Do before next deployment):
+   - Remove JWT_SECRET default
+   - Add exponential backoff
+   - Implement proper health check
+   
+2. **Soon** (Within 1 week):
+   - Add caching for Oura API
+   - Replace print() with logging
+   - Add request size limits
+
+3. **Eventually** (As needed):
+   - Comprehensive test suite
+   - API documentation
+   - Performance monitoring
