@@ -86,21 +86,49 @@ async def mcp_info():
             "outputSchema": {
                 "type": "object",
                 "properties": {
-                    "content": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "type": {"type": "string", "enum": ["text"]},
-                                "text": {"type": "string"}
-                            },
-                            "required": ["type", "text"]
-                        }
+                    "date": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format"
                     },
-                    "structuredContent": {"type": "object"},
-                    "isError": {"type": "boolean"}
+                    "stress": {
+                        "type": "object",
+                        "properties": {
+                            "highStressSeconds": {
+                                "type": "integer",
+                                "description": "Time spent in high stress (seconds)"
+                            },
+                            "recoverySeconds": {
+                                "type": "integer",
+                                "description": "Time spent in recovery (seconds)"
+                            },
+                            "ratio": {
+                                "type": ["number", "null"],
+                                "description": "Stress to recovery ratio"
+                            }
+                        },
+                        "required": ["highStressSeconds", "recoverySeconds"]
+                    },
+                    "resilience": {
+                        "type": "object",
+                        "properties": {
+                            "level": {
+                                "type": "string",
+                                "description": "Resilience level (e.g., solid, limited)"
+                            },
+                            "contributors": {
+                                "type": "object",
+                                "properties": {
+                                    "sleepRecovery": {"type": "number"},
+                                    "daytimeRecovery": {"type": "number"},
+                                    "stress": {"type": "number"}
+                                },
+                                "description": "Contributing factors to resilience"
+                            }
+                        },
+                        "required": ["level"]
+                    }
                 },
-                "required": ["content"]
+                "required": ["date", "stress", "resilience"]
             }
         }]
     }
@@ -203,21 +231,49 @@ async def mcp_endpoint(request: Request):
                         "outputSchema": {
                             "type": "object",
                             "properties": {
-                                "content": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "type": {"type": "string", "enum": ["text"]},
-                                            "text": {"type": "string"}
-                                        },
-                                        "required": ["type", "text"]
-                                    }
+                                "date": {
+                                    "type": "string",
+                                    "description": "Date in YYYY-MM-DD format"
                                 },
-                                "structuredContent": {"type": "object"},
-                                "isError": {"type": "boolean"}
+                                "stress": {
+                                    "type": "object",
+                                    "properties": {
+                                        "highStressSeconds": {
+                                            "type": "integer",
+                                            "description": "Time spent in high stress (seconds)"
+                                        },
+                                        "recoverySeconds": {
+                                            "type": "integer",
+                                            "description": "Time spent in recovery (seconds)"
+                                        },
+                                        "ratio": {
+                                            "type": ["number", "null"],
+                                            "description": "Stress to recovery ratio"
+                                        }
+                                    },
+                                    "required": ["highStressSeconds", "recoverySeconds"]
+                                },
+                                "resilience": {
+                                    "type": "object",
+                                    "properties": {
+                                        "level": {
+                                            "type": "string",
+                                            "description": "Resilience level (e.g., solid, limited)"
+                                        },
+                                        "contributors": {
+                                            "type": "object",
+                                            "properties": {
+                                                "sleepRecovery": {"type": "number"},
+                                                "daytimeRecovery": {"type": "number"},
+                                                "stress": {"type": "number"}
+                                            },
+                                            "description": "Contributing factors to resilience"
+                                        }
+                                    },
+                                    "required": ["level"]
+                                }
                             },
-                            "required": ["content", "structuredContent", "isError"]
+                            "required": ["date", "stress", "resilience"]
                         }
                     }]
                 }
