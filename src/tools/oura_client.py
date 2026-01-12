@@ -66,9 +66,14 @@ class OuraAPIClient:
         return await self.fetch_data("daily_readiness", params)
     
     async def get_daily_sleep(self, target_date: str) -> Dict[str, Any]:
-        """Get daily sleep data for a specific date"""
+        """Get daily sleep summary data for a specific date (score + contributors only)"""
         params = {"start_date": target_date, "end_date": target_date}
         return await self.fetch_data("daily_sleep", params)
+
+    async def get_sleep(self, target_date: str) -> Dict[str, Any]:
+        """Get detailed sleep data for a specific date (includes durations, timestamps, HRV, etc.)"""
+        params = {"start_date": target_date, "end_date": target_date}
+        return await self.fetch_data("sleep", params)
     
     async def get_daily_activity(self, target_date: str) -> Dict[str, Any]:
         """Get daily activity data for a specific date"""
