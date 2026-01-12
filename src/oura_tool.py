@@ -18,10 +18,12 @@ try:
     # Try absolute import first (for when running as python main.py)
     from src.auth.oauth_server import setup_oauth_routes, validate_token, storage
     from src.tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
+    from src.tools.readiness import get_readiness_data
 except ImportError:
     # Fall back to relative import (for when running as python src/oura_tool.py)
     from auth.oauth_server import setup_oauth_routes, validate_token, storage
     from tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
+    from tools.readiness import get_readiness_data
 
 # Load environment variables
 load_dotenv()
@@ -64,6 +66,22 @@ async def get_stress_and_resilience_data(user_id: str, date_param: Optional[str]
     
     # Call the imported function
     return await get_stress_resilience(oura_token, date_param)
+
+async def get_readiness(user_id: str, date_param: Optional[str] = None) -> dict:
+    """Get readiness data for user"""
+
+    # Get user's Oura token from storage
+    user_data = await storage.user_tokens.get(user_id)
+    if not user_data:
+        return {
+            "content": [{"type": "text", "text": "User not found"}],
+            "isError": True
+        }
+
+    oura_token = user_data["oura_token"]
+
+    # Call the imported function
+    return await get_readiness_data(oura_token, date_param)
 
 # MCP endpoint info
 @app.get("/mcp")
@@ -129,6 +147,52 @@ async def mcp_info():
                     }
                 },
                 "required": ["date", "stress", "resilience"]
+            }
+        }, {
+            "name": "get_readiness",
+            "description": "Get readiness score and contributors for a specific date",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "date_param": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format (defaults to today)"
+                    }
+                }
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "score": {
+                        "type": "integer",
+                        "description": "Overall readiness score (0-100)"
+                    },
+                    "contributors": {
+                        "type": "object",
+                        "properties": {
+                            "hrvBalance": {"type": ["integer", "null"]},
+                            "bodyTemperature": {"type": ["integer", "null"]},
+                            "recoveryIndex": {"type": ["integer", "null"]},
+                            "restingHeartRate": {"type": ["integer", "null"]},
+                            "sleepBalance": {"type": ["integer", "null"]},
+                            "previousNight": {"type": ["integer", "null"]},
+                            "previousDayActivity": {"type": ["integer", "null"]},
+                            "activityBalance": {"type": ["integer", "null"]}
+                        },
+                        "description": "Individual readiness contributors (0-100)"
+                    },
+                    "limitingFactors": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Contributors with scores < 70"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "When readiness was calculated"
+                    }
+                },
+                "required": ["score", "contributors", "limitingFactors", "timestamp"]
             }
         }]
     }
@@ -198,7 +262,7 @@ async def mcp_endpoint(request: Request):
         
         method = mcp_request.get("method")
         print(f"MCP method: {method}")
-        
+
         if method == "initialize":
             response = {
                 "jsonrpc": "2.0",
@@ -275,11 +339,57 @@ async def mcp_endpoint(request: Request):
                             },
                             "required": ["date", "stress", "resilience"]
                         }
+                    }, {
+                        "name": "get_readiness",
+                        "description": "Get readiness score and contributors for a specific date",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "date_param": {
+                                    "type": "string",
+                                    "description": "Date in YYYY-MM-DD format (defaults to today)"
+                                }
+                            }
+                        },
+                        "outputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "score": {
+                                    "type": "integer",
+                                    "description": "Overall readiness score (0-100)"
+                                },
+                                "contributors": {
+                                    "type": "object",
+                                    "properties": {
+                                        "hrvBalance": {"type": ["integer", "null"]},
+                                        "bodyTemperature": {"type": ["integer", "null"]},
+                                        "recoveryIndex": {"type": ["integer", "null"]},
+                                        "restingHeartRate": {"type": ["integer", "null"]},
+                                        "sleepBalance": {"type": ["integer", "null"]},
+                                        "previousNight": {"type": ["integer", "null"]},
+                                        "previousDayActivity": {"type": ["integer", "null"]},
+                                        "activityBalance": {"type": ["integer", "null"]}
+                                    },
+                                    "description": "Individual readiness contributors (0-100)"
+                                },
+                                "limitingFactors": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Contributors with scores < 70"
+                                },
+                                "timestamp": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "description": "When readiness was calculated"
+                                }
+                            },
+                            "required": ["score", "contributors", "limitingFactors", "timestamp"]
+                        }
                     }]
                 }
             }
             return JSONResponse(content=response, headers={"Content-Type": "application/json"})
-        
+
         elif method == "tools/call":
             params = mcp_request.get("params", {})
             if params.get("name") == "get_stress_and_resilience":
@@ -298,7 +408,22 @@ async def mcp_endpoint(request: Request):
                     },
                     headers={"Content-Type": "application/json"}
                 )
-        
+            elif params.get("name") == "get_readiness":
+                args = params.get("arguments", {})
+                result = await get_readiness(
+                    user_id=token_data["user_id"],
+                    date_param=args.get("date_param")
+                )
+
+                return JSONResponse(
+                    content={
+                        "jsonrpc": "2.0",
+                        "id": mcp_request.get("id"),
+                        "result": result
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
+
         # Unknown method
         return JSONResponse(
             content={
