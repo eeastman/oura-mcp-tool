@@ -142,9 +142,32 @@ The SQLite database will be automatically created at `data/tokens.db` on first r
 
 See `DEPLOYMENT.md` for detailed instructions.
 
-## Available Tool
+## Available Tools
 
-- `get_stress_and_resilience`: Get stress load and resilience data for a specific date (defaults to today)
+### 1. `get_stress_and_resilience`
+Get stress load and resilience data for a specific date (defaults to today)
+
+**Returns:**
+- Stress time in high stress vs recovery
+- Stress:recovery ratio
+- Resilience level and contributors
+
+### 2. `get_readiness`
+Get readiness score and detailed contributor breakdown for a specific date (defaults to today)
+
+**Returns:**
+- Overall readiness score (0-100)
+- 8 individual contributors:
+  - HRV Balance
+  - Body Temperature
+  - Recovery Index
+  - Resting Heart Rate
+  - Sleep Balance
+  - Previous Night
+  - Previous Day Activity
+  - Activity Balance
+- Limiting factors (contributors scoring < 70)
+- Timestamp of calculation
 
 ### Key Features
 - **Actionable ratio**: Computing stress:recovery ratio (4:1 is concerning) rather than raw seconds

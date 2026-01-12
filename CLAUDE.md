@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a focused MCP (Model Context Protocol) tool that provides **stress and resilience data** from Oura Ring devices. Built using Python 3.11 with FastAPI + FastMCP, **OAuth 2.0 protected** for deployment to the Dreamer platform.
+This is a focused MCP (Model Context Protocol) tool that provides **stress, resilience, and readiness data** from Oura Ring devices. Built using Python 3.11 with FastAPI + FastMCP, **OAuth 2.0 protected** for deployment to the Dreamer platform.
 
-**Purpose**: Returns actionable stress:recovery ratios and resilience context to understand why readiness might be declining.
+**Purpose**: Returns actionable health metrics including stress:recovery ratios, resilience context, and comprehensive readiness scores with contributor breakdown to understand what's affecting your wellness.
 
 **Security**: Full OAuth 2.0 + PKCE implementation with Dynamic Client Registration per Dreamer requirements.
 
@@ -66,11 +66,18 @@ oura_tool/
    - Supports multiple endpoints (stress, resilience, sleep, activity, readiness)
    - Reusable for other Oura-based tools
 
-3. **MCP Tool** (`src/tools/stress_resilience.py`)
-   - `get_stress_and_resilience` function
-   - Combines data from `/daily_stress` and `/daily_resilience` endpoints
-   - Calculates actionable stress:recovery ratio
-   - Returns resilience level with contributing factors
+3. **MCP Tools**
+   - **Stress & Resilience** (`src/tools/stress_resilience.py`)
+     - `get_stress_and_resilience` function
+     - Combines data from `/daily_stress` and `/daily_resilience` endpoints
+     - Calculates actionable stress:recovery ratio
+     - Returns resilience level with contributing factors
+   - **Readiness** (`src/tools/readiness.py`)
+     - `get_readiness` function
+     - Fetches data from `/daily_readiness` endpoint
+     - Returns overall readiness score (0-100)
+     - Provides 8 individual contributor scores
+     - Identifies limiting factors (contributors < 70)
 
 4. **Main App** (`src/oura_tool.py`)
    - FastAPI app setup
