@@ -19,11 +19,13 @@ try:
     from src.auth.oauth_server import setup_oauth_routes, validate_token, storage
     from src.tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
     from src.tools.readiness import get_readiness_data
+    from src.tools.sleep_quality import get_sleep_quality_data
 except ImportError:
     # Fall back to relative import (for when running as python src/oura_tool.py)
     from auth.oauth_server import setup_oauth_routes, validate_token, storage
     from tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
     from tools.readiness import get_readiness_data
+    from tools.sleep_quality import get_sleep_quality_data
 
 # Load environment variables
 load_dotenv()
@@ -82,6 +84,22 @@ async def get_readiness(user_id: str, date_param: Optional[str] = None) -> dict:
 
     # Call the imported function
     return await get_readiness_data(oura_token, date_param)
+
+async def get_sleep_quality(user_id: str, date_param: Optional[str] = None) -> dict:
+    """Get sleep quality data for user"""
+
+    # Get user's Oura token from storage
+    user_data = await storage.user_tokens.get(user_id)
+    if not user_data:
+        return {
+            "content": [{"type": "text", "text": "User not found"}],
+            "isError": True
+        }
+
+    oura_token = user_data["oura_token"]
+
+    # Call the imported function
+    return await get_sleep_quality_data(oura_token, date_param)
 
 # MCP endpoint info
 @app.get("/mcp")
@@ -193,6 +211,71 @@ async def mcp_info():
                     }
                 },
                 "required": ["score", "contributors", "limitingFactors", "timestamp"]
+            }
+        }, {
+            "name": "get_sleep_quality",
+            "description": "Get sleep quality score and detailed sleep metrics for a specific date",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "date_param": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format (defaults to today)"
+                    }
+                }
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "score": {
+                        "type": "integer",
+                        "description": "Overall sleep quality score (0-100)"
+                    },
+                    "contributors": {
+                        "type": "object",
+                        "properties": {
+                            "deepSleep": {"type": ["integer", "null"]},
+                            "remSleep": {"type": ["integer", "null"]},
+                            "efficiency": {"type": ["integer", "null"]},
+                            "latency": {"type": ["integer", "null"]},
+                            "restfulness": {"type": ["integer", "null"]},
+                            "timing": {"type": ["integer", "null"]},
+                            "totalSleep": {"type": ["integer", "null"]}
+                        },
+                        "description": "Individual sleep quality contributors (0-100)"
+                    },
+                    "limitingFactors": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Contributors with scores < 70"
+                    },
+                    "durations": {
+                        "type": "object",
+                        "properties": {
+                            "total": {"type": "integer", "description": "Total sleep duration in seconds"},
+                            "deep": {"type": "integer", "description": "Deep sleep duration in seconds"},
+                            "rem": {"type": "integer", "description": "REM sleep duration in seconds"},
+                            "light": {"type": "integer", "description": "Light sleep duration in seconds"},
+                            "awake": {"type": "integer", "description": "Awake duration in seconds"}
+                        }
+                    },
+                    "timestamps": {
+                        "type": "object",
+                        "properties": {
+                            "bedtimeStart": {
+                                "type": ["string", "null"],
+                                "format": "date-time",
+                                "description": "When bedtime started"
+                            },
+                            "bedtimeEnd": {
+                                "type": ["string", "null"],
+                                "format": "date-time",
+                                "description": "When bedtime ended"
+                            }
+                        }
+                    }
+                },
+                "required": ["score", "contributors", "limitingFactors", "durations", "timestamps"]
             }
         }]
     }
@@ -385,6 +468,71 @@ async def mcp_endpoint(request: Request):
                             },
                             "required": ["score", "contributors", "limitingFactors", "timestamp"]
                         }
+                    }, {
+                        "name": "get_sleep_quality",
+                        "description": "Get sleep quality score and detailed sleep metrics for a specific date",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "date_param": {
+                                    "type": "string",
+                                    "description": "Date in YYYY-MM-DD format (defaults to today)"
+                                }
+                            }
+                        },
+                        "outputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "score": {
+                                    "type": "integer",
+                                    "description": "Overall sleep quality score (0-100)"
+                                },
+                                "contributors": {
+                                    "type": "object",
+                                    "properties": {
+                                        "deepSleep": {"type": ["integer", "null"]},
+                                        "remSleep": {"type": ["integer", "null"]},
+                                        "efficiency": {"type": ["integer", "null"]},
+                                        "latency": {"type": ["integer", "null"]},
+                                        "restfulness": {"type": ["integer", "null"]},
+                                        "timing": {"type": ["integer", "null"]},
+                                        "totalSleep": {"type": ["integer", "null"]}
+                                    },
+                                    "description": "Individual sleep quality contributors (0-100)"
+                                },
+                                "limitingFactors": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Contributors with scores < 70"
+                                },
+                                "durations": {
+                                    "type": "object",
+                                    "properties": {
+                                        "total": {"type": "integer", "description": "Total sleep duration in seconds"},
+                                        "deep": {"type": "integer", "description": "Deep sleep duration in seconds"},
+                                        "rem": {"type": "integer", "description": "REM sleep duration in seconds"},
+                                        "light": {"type": "integer", "description": "Light sleep duration in seconds"},
+                                        "awake": {"type": "integer", "description": "Awake duration in seconds"}
+                                    }
+                                },
+                                "timestamps": {
+                                    "type": "object",
+                                    "properties": {
+                                        "bedtimeStart": {
+                                            "type": ["string", "null"],
+                                            "format": "date-time",
+                                            "description": "When bedtime started"
+                                        },
+                                        "bedtimeEnd": {
+                                            "type": ["string", "null"],
+                                            "format": "date-time",
+                                            "description": "When bedtime ended"
+                                        }
+                                    }
+                                }
+                            },
+                            "required": ["score", "contributors", "limitingFactors", "durations", "timestamps"]
+                        }
                     }]
                 }
             }
@@ -411,6 +559,21 @@ async def mcp_endpoint(request: Request):
             elif params.get("name") == "get_readiness":
                 args = params.get("arguments", {})
                 result = await get_readiness(
+                    user_id=token_data["user_id"],
+                    date_param=args.get("date_param")
+                )
+
+                return JSONResponse(
+                    content={
+                        "jsonrpc": "2.0",
+                        "id": mcp_request.get("id"),
+                        "result": result
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
+            elif params.get("name") == "get_sleep_quality":
+                args = params.get("arguments", {})
+                result = await get_sleep_quality(
                     user_id=token_data["user_id"],
                     date_param=args.get("date_param")
                 )
