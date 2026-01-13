@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a focused MCP (Model Context Protocol) tool that provides **stress, resilience, and readiness data** from Oura Ring devices. Built using Python 3.11 with FastAPI + FastMCP, **OAuth 2.0 protected** for deployment to the Dreamer platform.
 
-**Purpose**: Returns actionable health metrics including stress:recovery ratios, resilience context, and comprehensive readiness scores with contributor breakdown to understand what's affecting your wellness.
+**Purpose**: Returns actionable health metrics including stress:recovery ratios, resilience context, readiness scores with contributor breakdown, and detailed sleep quality data to understand what's affecting your wellness.
 
 **Security**: Full OAuth 2.0 + PKCE implementation with Dynamic Client Registration per Dreamer requirements.
 
@@ -46,7 +46,9 @@ oura_tool/
 │   │   └── storage_wrapper.py  # Dictionary-like wrapper for storage
 │   └── tools/
 │       ├── oura_client.py      # Oura API client (reusable)
-│       └── stress_resilience.py # Stress & resilience tool logic
+│       ├── stress_resilience.py # Stress & resilience tool logic
+│       ├── readiness.py        # Readiness score tool logic
+│       └── sleep_quality.py    # Sleep quality tool logic
 ├── data/                        # SQLite database directory (gitignored)
 ```
 
@@ -77,6 +79,14 @@ oura_tool/
      - Fetches data from `/daily_readiness` endpoint
      - Returns overall readiness score (0-100)
      - Provides 8 individual contributor scores
+     - Identifies limiting factors (contributors < 70)
+   - **Sleep Quality** (`src/tools/sleep_quality.py`)
+     - `get_sleep_quality` function
+     - Combines data from `/daily_sleep` and `/sleep` endpoints
+     - Returns overall sleep score (0-100)
+     - Provides 7 contributor scores (deepSleep, remSleep, efficiency, latency, restfulness, timing, totalSleep)
+     - Includes sleep stage durations (total, deep, rem, light, awake) in seconds
+     - Includes bedtime timestamps (start and end)
      - Identifies limiting factors (contributors < 70)
 
 4. **Main App** (`src/oura_tool.py`)
