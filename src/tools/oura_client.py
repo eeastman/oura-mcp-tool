@@ -73,14 +73,16 @@ class OuraAPIClient:
     async def get_sleep(self, target_date: str) -> Dict[str, Any]:
         """Get detailed sleep data for a specific date (includes durations, timestamps, HRV, etc.)
 
-        Note: Queries from day before target_date because API filters by bedtime_start,
+        Note: Queries a wider range because API filters by bedtime_start,
         but we want records where the day field matches target_date.
+        Also handles timezone differences between server and API.
         """
-        # Query from day before because sleep starting on Jan 9 night has day=Jan 10
         from datetime import datetime, timedelta
         target = datetime.strptime(target_date, "%Y-%m-%d")
-        start = (target - timedelta(days=1)).strftime("%Y-%m-%d")
-        params = {"start_date": start, "end_date": target_date}
+        # Query 2 days before through 1 day after to handle timezone issues
+        start = (target - timedelta(days=2)).strftime("%Y-%m-%d")
+        end = (target + timedelta(days=1)).strftime("%Y-%m-%d")
+        params = {"start_date": start, "end_date": end}
         return await self.fetch_data("sleep", params)
     
     async def get_daily_activity(self, target_date: str) -> Dict[str, Any]:
