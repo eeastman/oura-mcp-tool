@@ -89,3 +89,25 @@ class OuraAPIClient:
         """Get daily activity data for a specific date"""
         params = {"start_date": target_date, "end_date": target_date}
         return await self.fetch_data("daily_activity", params)
+
+    # Range query methods for trends
+    async def get_daily_readiness_range(self, start_date: str, end_date: str) -> Dict[str, Any]:
+        """Get daily readiness data for a date range (for trends: score + temperature_deviation)"""
+        params = {"start_date": start_date, "end_date": end_date}
+        return await self.fetch_data("daily_readiness", params)
+
+    async def get_daily_sleep_range(self, start_date: str, end_date: str) -> Dict[str, Any]:
+        """Get daily sleep summary data for a date range (for trends: sleep score)"""
+        params = {"start_date": start_date, "end_date": end_date}
+        return await self.fetch_data("daily_sleep", params)
+
+    async def get_sleep_range(self, start_date: str, end_date: str) -> Dict[str, Any]:
+        """Get detailed sleep data for a date range (for trends: HRV)
+
+        Note: Extends range by 2 days before to handle bedtime_start filtering.
+        """
+        from datetime import datetime, timedelta
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        adjusted_start = (start - timedelta(days=2)).strftime("%Y-%m-%d")
+        params = {"start_date": adjusted_start, "end_date": end_date}
+        return await self.fetch_data("sleep", params)

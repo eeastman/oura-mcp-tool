@@ -48,7 +48,8 @@ oura_tool/
 │       ├── oura_client.py      # Oura API client (reusable)
 │       ├── stress_resilience.py # Stress & resilience tool logic
 │       ├── readiness.py        # Readiness score tool logic
-│       └── sleep_quality.py    # Sleep quality tool logic
+│       ├── sleep_quality.py    # Sleep quality tool logic
+│       └── trends.py           # Multi-day trends tool logic
 ├── data/                        # SQLite database directory (gitignored)
 ```
 
@@ -88,6 +89,16 @@ oura_tool/
      - Includes sleep stage durations (total, deep, rem, light, awake) in seconds
      - Includes bedtime timestamps (start and end)
      - Identifies limiting factors (contributors < 70)
+   - **Trends** (`src/tools/trends.py`)
+     - `get_trends` function
+     - Fetches multi-day data from `/daily_readiness`, `/daily_sleep`, and `/sleep` endpoints
+     - Returns 7-day trends (configurable 3-30 days) for:
+       - Readiness scores with direction and baseline comparison
+       - HRV averages with direction and baseline comparison
+       - Body temperature deviation with special pattern detection
+       - Sleep scores with direction and baseline comparison
+     - Pre-computes direction: "rising", "declining", "stable", "elevatedThenRecovering"
+     - Compares current period to 30-day baseline (changeVsBaseline %)
 
 4. **Main App** (`src/oura_tool.py`)
    - FastAPI app setup

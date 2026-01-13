@@ -20,12 +20,14 @@ try:
     from src.tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
     from src.tools.readiness import get_readiness_data
     from src.tools.sleep_quality import get_sleep_quality_data
+    from src.tools.trends import get_trends_data
 except ImportError:
     # Fall back to relative import (for when running as python src/oura_tool.py)
     from auth.oauth_server import setup_oauth_routes, validate_token, storage
     from tools.stress_resilience import get_stress_and_resilience_data as get_stress_resilience
     from tools.readiness import get_readiness_data
     from tools.sleep_quality import get_sleep_quality_data
+    from tools.trends import get_trends_data
 
 # Load environment variables
 load_dotenv()
@@ -100,6 +102,22 @@ async def get_sleep_quality(user_id: str, date_param: Optional[str] = None) -> d
 
     # Call the imported function
     return await get_sleep_quality_data(oura_token, date_param)
+
+async def get_trends(user_id: str, days: int = 7) -> dict:
+    """Get health trends for user over multiple days"""
+
+    # Get user's Oura token from storage
+    user_data = await storage.user_tokens.get(user_id)
+    if not user_data:
+        return {
+            "content": [{"type": "text", "text": "User not found"}],
+            "isError": True
+        }
+
+    oura_token = user_data["oura_token"]
+
+    # Call the imported function
+    return await get_trends_data(oura_token, days)
 
 # MCP endpoint info
 @app.get("/mcp")
@@ -533,6 +551,70 @@ async def mcp_endpoint(request: Request):
                             },
                             "required": ["score", "contributors", "limitingFactors", "durations", "timestamps"]
                         }
+                    }, {
+                        "name": "get_trends",
+                        "description": "Get 7-day health trends for readiness, HRV, body temperature, and sleep quality with direction analysis",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "days": {
+                                    "type": "integer",
+                                    "description": "Number of days to analyze (default 7, min 3, max 30)",
+                                    "default": 7,
+                                    "minimum": 3,
+                                    "maximum": 30
+                                }
+                            }
+                        },
+                        "outputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "readiness": {
+                                    "type": "object",
+                                    "properties": {
+                                        "values": {"type": "array", "items": {"type": ["integer", "null"]}},
+                                        "direction": {"type": "string", "enum": ["rising", "declining", "stable", "insufficient_data"]},
+                                        "average": {"type": ["integer", "null"]},
+                                        "changeVsBaseline": {"type": ["number", "null"], "description": "Percentage change vs 30-day baseline"}
+                                    }
+                                },
+                                "hrv": {
+                                    "type": "object",
+                                    "properties": {
+                                        "values": {"type": "array", "items": {"type": ["integer", "null"]}},
+                                        "direction": {"type": "string", "enum": ["rising", "declining", "stable", "insufficient_data"]},
+                                        "average": {"type": ["integer", "null"]},
+                                        "changeVsBaseline": {"type": ["number", "null"]}
+                                    }
+                                },
+                                "bodyTemperature": {
+                                    "type": "object",
+                                    "properties": {
+                                        "values": {"type": "array", "items": {"type": ["number", "null"]}},
+                                        "direction": {"type": "string", "enum": ["rising", "declining", "stable", "elevatedThenRecovering", "insufficient_data"]},
+                                        "latest": {"type": ["number", "null"], "description": "Latest temperature deviation from baseline"}
+                                    }
+                                },
+                                "sleepScore": {
+                                    "type": "object",
+                                    "properties": {
+                                        "values": {"type": "array", "items": {"type": ["integer", "null"]}},
+                                        "direction": {"type": "string", "enum": ["rising", "declining", "stable", "insufficient_data"]},
+                                        "average": {"type": ["integer", "null"]},
+                                        "changeVsBaseline": {"type": ["number", "null"]}
+                                    }
+                                },
+                                "period": {
+                                    "type": "object",
+                                    "properties": {
+                                        "days": {"type": "integer"},
+                                        "startDate": {"type": "string", "format": "date"},
+                                        "endDate": {"type": "string", "format": "date"}
+                                    }
+                                }
+                            },
+                            "required": ["readiness", "hrv", "bodyTemperature", "sleepScore", "period"]
+                        }
                     }]
                 }
             }
@@ -576,6 +658,21 @@ async def mcp_endpoint(request: Request):
                 result = await get_sleep_quality(
                     user_id=token_data["user_id"],
                     date_param=args.get("date_param")
+                )
+
+                return JSONResponse(
+                    content={
+                        "jsonrpc": "2.0",
+                        "id": mcp_request.get("id"),
+                        "result": result
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
+            elif params.get("name") == "get_trends":
+                args = params.get("arguments", {})
+                result = await get_trends(
+                    user_id=token_data["user_id"],
+                    days=args.get("days", 7)
                 )
 
                 return JSONResponse(
